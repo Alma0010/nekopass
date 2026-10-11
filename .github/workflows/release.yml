@@ -52,6 +52,8 @@ jobs:
           sudo systemctl start postgresql
           sudo -u postgres createuser runner || sudo -u postgres psql -XAt -c "SELECT 1 FROM pg_roles WHERE rolname='runner'" | grep -qx 1
           sudo -u postgres createdb -O runner nekopass_release_test
+          # Native ICMP tests use unprivileged ping sockets on this CI host.
+          sudo sysctl -w 'net.ipv4.ping_group_range=0 2147483647'
           go test -race -p 1 ./...
           go vet ./...
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0

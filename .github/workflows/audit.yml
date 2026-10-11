@@ -38,6 +38,8 @@ jobs:
             sudo -u postgres createuser runner
           fi
           sudo -u postgres createdb -O runner nekopass_ci_test
+          # Native ICMP tests use unprivileged ping sockets on this CI host.
+          sudo sysctl -w 'net.ipv4.ping_group_range=0 2147483647'
           go test -race -p 1 ./...
           go vet ./...
           go build -o .local/nekopass-startup-test ./cmd/nekopass
