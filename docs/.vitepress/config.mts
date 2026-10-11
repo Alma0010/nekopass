@@ -74,6 +74,7 @@ export default defineConfig({
         items: [
           { text: '用户与套餐', link: '/guide/users' },
           { text: '节点与节点组 / DDNS', link: '/guide/nodes' },
+          { text: '自动换 IP', link: '/guide/ip-recovery' },
           { text: '节点中转', link: '/guide/tunnel' },
           { text: '支付方式', link: '/guide/payments' },
           { text: 'Telegram Bot', link: '/guide/telegram' },

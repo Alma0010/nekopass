@@ -246,7 +246,10 @@ func (e *Engine) acceptTunnel(ctx context.Context, ln net.Listener) {
 func (e *Engine) handleTunnel(ctx context.Context, upstream net.Conn) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	stopUpstream := context.AfterFunc(ctx, func() { upstream.Close() })
+	// Keep the cancellation callback on the immutable underlying connection;
+	// upstream is subsequently replaced with a buffered wrapper.
+	rawUpstream := upstream
+	stopUpstream := context.AfterFunc(ctx, func() { rawUpstream.Close() })
 	defer stopUpstream()
 	defer upstream.Close()
 	_ = upstream.SetReadDeadline(time.Now().Add(5 * time.Second))

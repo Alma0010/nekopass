@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.17.5
+  version: 0.17.6
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Administrator-created accounts or optional email-verified registration. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -9,6 +9,41 @@ security:
   - session: []
   - httpSession: []
 paths:
+  /admin/nodes/{id}/ip-recovery:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, minimum: 1}}
+    get:
+      summary: Administrator-only node ping recovery configuration and latest status
+      responses:
+        '200': {description: Node identity, protocol version, config, generation and status}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    put:
+      summary: Save and distribute standalone ping-triggered IP recovery configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/IPRecoveryConfig'}
+      responses:
+        '200': {description: New configuration generation}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {description: Another node already enabled recovery for this cloud instance}
+  /admin/nodes/{id}/ip-recovery/reset:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, minimum: 1}}
+    post:
+      summary: Clear uncertain pending operation after an administrator checks the cloud task
+      description: Retains durable cooldown; restarts failure counting after the node receives the reset.
+      responses:
+        '200': {description: New configuration generation and reset sequence scheduled}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
   /admin/orders:
     get:
       summary: Administrator-only read-only order search across all users
@@ -1196,6 +1231,22 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/RuleInput'}
   schemas:
+    IPRecoveryConfig:
+      type: object
+      additionalProperties: false
+      description: Runs independently on the agent every five seconds; does not use the cloud provider GFW detector. Requires agent protocol 19.
+      properties:
+        enabled: {type: boolean, default: false}
+        target_ip: {type: string, description: Public IPv4 responding to ICMP echo; required when enabled}
+        failure_threshold: {type: integer, minimum: 1, maximum: 720, default: 6}
+        cooldown_seconds: {type: integer, minimum: 30, maximum: 86400, default: 300}
+        instance_type: {type: string, enum: [ec2, lightsail], default: ec2}
+        auth_token: {type: string, maxLength: 4096, description: Administrator-only X-Auth-Token; at least one credential required when enabled}
+        share_group_token: {type: string, maxLength: 4096, description: Administrator-only alternative sharing credential}
+        account_id: {type: string, maxLength: 255, description: Cloud account record ID; may be empty when using a sharing credential}
+        region_name: {type: string, maxLength: 255}
+        instance_id: {type: string, maxLength: 255, description: EC2 instance ID or Lightsail instance name}
+        static_ip: {type: boolean, default: false}
     NodeProtocolsInput:
       type: object
       additionalProperties: false

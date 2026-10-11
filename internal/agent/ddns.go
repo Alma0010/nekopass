@@ -144,6 +144,8 @@ func (e *Engine) runDDNS(ctx context.Context, config *pb.DDNSConfig) {
 			timer.Stop()
 			return
 		case <-timer.C:
+		case <-e.ddnsWake:
+			timer.Stop()
 		}
 	}
 }

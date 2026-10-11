@@ -31,6 +31,7 @@ message AgentMessage {
   bool update_supported = 14;
   bool restore_state = 15;
  PublicIPStatus public_ip = 16;
+ IPRecoveryStatus ip_recovery_status = 17;
 }
 message PublicIPStatus {
  string ipv4 = 1;
@@ -141,6 +142,36 @@ message NodeConfig {
  bool security_configured = 20;
  int32 udp_idle_timeout_seconds = 21;
  bool report_public_ip = 22;
+ IPRecoveryConfig ip_recovery = 23;
+}
+
+message IPRecoveryConfig {
+ bool enabled = 1;
+ int64 generation = 2;
+ string target_ip = 3;
+ int32 failure_threshold = 4;
+ int32 cooldown_seconds = 5;
+ string instance_type = 6;
+ string auth_token = 7;
+ string share_group_token = 8;
+ string account_id = 9;
+ string region_name = 10;
+ string instance_id = 11;
+ bool static_ip = 12;
+ int64 reset_sequence = 13;
+}
+message IPRecoveryStatus {
+ int64 generation = 1;
+ string state = 2;
+ int32 failures = 3;
+ bool reachable = 4;
+ int64 checked_unix = 5;
+ int64 last_attempt_unix = 6;
+ int64 last_changed_unix = 7;
+ int64 cooldown_until_unix = 8;
+ string old_ip = 9;
+ string new_ip = 10;
+ string error = 11;
 }
 
 message DDNSConfig {

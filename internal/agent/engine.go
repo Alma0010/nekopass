@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/nekopass/nekopass/internal/ddns"
+	"github.com/nekopass/nekopass/internal/iprecovery"
 	"github.com/nekopass/nekopass/internal/networkpolicy"
 	pb "github.com/nekopass/nekopass/internal/protocol"
 	"github.com/nekopass/nekopass/internal/release"
@@ -32,40 +33,47 @@ type listener struct {
 	cancel  context.CancelFunc
 }
 type Engine struct {
-	mu              sync.Mutex
-	state           *State
-	users           map[int64]*Account
-	retired         map[string]*Account
-	listeners       map[int64]*listener
-	udpListeners    map[int64]*udpListener
-	udpQueued       atomic.Int64
-	udpNonceMu      sync.Mutex
-	udpNonces       map[string]time.Time
-	nativeUDP       *nativeUDPListener
-	counters        map[int64]*atomic.Int64
-	revision        int64
-	syncError       string
-	wg              sync.WaitGroup
-	closed          bool
-	maxConnections  atomic.Int64
-	node            atomic.Pointer[pb.NodeConfig]
-	targetPolicy    atomic.Pointer[networkpolicy.Policy]
-	probe           atomic.Pointer[pb.Probe]
-	connections     atomic.Int64
-	tunnel          *tunnelListener
-	tunnelPolicy    atomic.Pointer[tunnelPolicy]
-	h2              *h2Transport
-	h2Certificate   atomic.Pointer[tls.Certificate]
-	acmeAck         atomic.Int64
-	challengeServer *http.Server
-	ddnsConfig      *pb.DDNSConfig
-	ddnsCancel      context.CancelFunc
-	ddnsStatus      atomic.Pointer[pb.DDNSStatus]
-	publicIP        atomic.Pointer[pb.PublicIPStatus]
-	publicIPCancel  context.CancelFunc
-	ddnsClient      func() *ddns.Client
-	updateDirectory string
-	updateStatus    *pb.UpdateStatus
+	mu               sync.Mutex
+	state            *State
+	users            map[int64]*Account
+	retired          map[string]*Account
+	listeners        map[int64]*listener
+	udpListeners     map[int64]*udpListener
+	udpQueued        atomic.Int64
+	udpNonceMu       sync.Mutex
+	udpNonces        map[string]time.Time
+	nativeUDP        *nativeUDPListener
+	counters         map[int64]*atomic.Int64
+	revision         int64
+	syncError        string
+	wg               sync.WaitGroup
+	closed           bool
+	maxConnections   atomic.Int64
+	node             atomic.Pointer[pb.NodeConfig]
+	targetPolicy     atomic.Pointer[networkpolicy.Policy]
+	probe            atomic.Pointer[pb.Probe]
+	connections      atomic.Int64
+	tunnel           *tunnelListener
+	tunnelPolicy     atomic.Pointer[tunnelPolicy]
+	h2               *h2Transport
+	h2Certificate    atomic.Pointer[tls.Certificate]
+	acmeAck          atomic.Int64
+	challengeServer  *http.Server
+	ipRecoveryConfig *pb.IPRecoveryConfig
+	ipRecoveryCancel context.CancelFunc
+	ipRecoveryStatus atomic.Pointer[pb.IPRecoveryStatus]
+	ipRecoveryAPI    func() iprecovery.API
+	ipRecoveryProbe  func(context.Context, string) (bool, error)
+	ddnsWake         chan struct{}
+	publicIPWake     chan struct{}
+	ddnsConfig       *pb.DDNSConfig
+	ddnsCancel       context.CancelFunc
+	ddnsStatus       atomic.Pointer[pb.DDNSStatus]
+	publicIP         atomic.Pointer[pb.PublicIPStatus]
+	publicIPCancel   context.CancelFunc
+	ddnsClient       func() *ddns.Client
+	updateDirectory  string
+	updateStatus     *pb.UpdateStatus
 }
 
 var buffers = sync.Pool{New: func() any { b := make([]byte, BufferSize); return &b }}
@@ -76,6 +84,10 @@ func NewEngine(s *State, maxConnections int64) (*Engine, error) {
 	e.udpListeners = map[int64]*udpListener{}
 	e.udpNonces = map[string]time.Time{}
 	e.ddnsClient = ddns.NewClient
+	e.ipRecoveryAPI = iprecovery.NewClient
+	e.ipRecoveryProbe = iprecovery.Ping
+	e.ddnsWake = make(chan struct{}, 1)
+	e.publicIPWake = make(chan struct{}, 1)
 	e.maxConnections.Store(maxConnections)
 	users, err := s.LoadUsers()
 	if err != nil {
@@ -154,9 +166,11 @@ func (e *Engine) Apply(c *pb.ControlMessage) error {
 		restartListeners = old != nil && (old.DialTimeoutSeconds != c.Node.DialTimeoutSeconds || old.IdleTimeoutSeconds != c.Node.IdleTimeoutSeconds || !slices.Equal(old.ProxyTrustedCidrs, c.Node.ProxyTrustedCidrs) || old.SecurityConfigured != c.Node.SecurityConfigured)
 		e.node.Store(proto.Clone(c.Node).(*pb.NodeConfig))
 		e.maxConnections.Store(c.Node.MaxConnections)
+		e.configureIPRecovery(c.Node.IpRecovery)
 		e.configureDDNS(c.Node.Ddns)
 		e.configurePublicIP(c.Node.ReportPublicIp && (c.Node.Ddns == nil || !c.Node.Ddns.Enabled))
 	} else {
+		e.configureIPRecovery(nil)
 		e.configureDDNS(nil)
 		e.configurePublicIP(false)
 	}
@@ -426,7 +440,7 @@ func (e *Engine) Report() (*pb.AgentMessage, error) {
 		a.mu.Lock()
 		defer a.mu.Unlock()
 	}
-	r := &pb.AgentMessage{ProtocolVersion: 18, AgentVersion: release.Version, UpdateSupported: e.updateDirectory != "", UpdateStatus: e.readUpdateStatus(), AcmeAck: e.acmeAck.Load(), Probe: e.probe.Load(), InstanceId: e.state.Instance, AppliedRevision: e.revision, Error: e.syncError, ActiveConnections: e.connections.Load(), DdnsStatus: e.ddnsStatus.Load(), PublicIp: e.publicIP.Load()}
+	r := &pb.AgentMessage{ProtocolVersion: 19, AgentVersion: release.Version, UpdateSupported: e.updateDirectory != "", UpdateStatus: e.readUpdateStatus(), AcmeAck: e.acmeAck.Load(), Probe: e.probe.Load(), InstanceId: e.state.Instance, AppliedRevision: e.revision, Error: e.syncError, ActiveConnections: e.connections.Load(), DdnsStatus: e.ddnsStatus.Load(), PublicIp: e.publicIP.Load(), IpRecoveryStatus: e.ipRecoveryStatus.Load()}
 	pending, err := e.state.RestorePending()
 	if err != nil {
 		return nil, err
@@ -476,6 +490,10 @@ func (e *Engine) Report() (*pb.AgentMessage, error) {
 func (e *Engine) Close() {
 	e.mu.Lock()
 	e.closed = true
+	if e.ipRecoveryCancel != nil {
+		e.ipRecoveryCancel()
+		e.ipRecoveryCancel = nil
+	}
 	if e.publicIPCancel != nil {
 		e.publicIPCancel()
 		e.publicIPCancel = nil

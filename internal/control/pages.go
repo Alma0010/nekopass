@@ -31,10 +31,13 @@ func resolvePage(path string) (pageRoute, bool) {
 		return p, true
 	}
 	parts := strings.Split(path, "/")
-	if len(parts) == 5 && parts[1] == "admin" && parts[2] == "nodes" && (parts[4] == "ddns" || parts[4] == "protocols") {
+	if len(parts) == 5 && parts[1] == "admin" && parts[2] == "nodes" && (parts[4] == "ddns" || parts[4] == "protocols" || parts[4] == "ip-recovery") {
 		id, err := strconv.ParseInt(parts[3], 10, 64)
 		if err == nil && id > 0 && strconv.FormatInt(id, 10) == parts[3] {
 			file := "admin_node_ddns"
+			if parts[4] == "ip-recovery" {
+				file = "admin_node_ip_recovery"
+			}
 			if parts[4] == "protocols" {
 				file = "admin_node_protocols"
 			}

@@ -430,6 +430,12 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 		out.EgressRules = nil
 		out.TunnelLinks = nil
 	}
+	if e = appendIPRecoveryControl(ctx, tx, nodeID, out); e != nil {
+		return nil, e
+	}
+	if e = acceptIPRecoveryReport(ctx, tx, nodeID, r.IpRecoveryStatus); e != nil {
+		return nil, e
+	}
 	if e = appendDDNSControl(ctx, tx, nodeID, out); e != nil {
 		return nil, e
 	}

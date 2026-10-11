@@ -43,6 +43,7 @@ func (e *Engine) configurePublicIP(enabled bool) {
 			case <-ctx.Done():
 				return
 			case <-time.After(time.Minute):
+			case <-e.publicIPWake:
 			}
 		}
 	}()
