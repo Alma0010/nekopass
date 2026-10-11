@@ -2,7 +2,7 @@
 
 ## 配置
 
-在「系统设置 → Telegram Bot」填写以下内容，打开「启用 Telegram Bot」并保存：
+在「系统设置 → Telegram」填写以下内容，打开「启用 Telegram Bot」并保存：
 
 | 配置项 | 用途 |
 | --- | --- |
