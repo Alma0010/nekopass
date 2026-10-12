@@ -834,21 +834,26 @@ func (x *OriginTLSConfig) GetAlpn() []string {
 }
 
 type SharedTLSInbound struct {
-	state                   protoimpl.MessageState `protogen:"open.v1"`
-	Id                      int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	Port                    int32                  `protobuf:"varint,2,opt,name=port,proto3" json:"port,omitempty"`
-	Enabled                 bool                   `protobuf:"varint,3,opt,name=enabled,proto3" json:"enabled,omitempty"`
-	Certificate             string                 `protobuf:"bytes,4,opt,name=certificate,proto3" json:"certificate,omitempty"`
-	PrivateKey              string                 `protobuf:"bytes,5,opt,name=private_key,json=privateKey,proto3" json:"private_key,omitempty"`
-	AllowedSni              []string               `protobuf:"bytes,6,rep,name=allowed_sni,json=allowedSni,proto3" json:"allowed_sni,omitempty"`
-	RejectEmptySni          bool                   `protobuf:"varint,7,opt,name=reject_empty_sni,json=rejectEmptySni,proto3" json:"reject_empty_sni,omitempty"`
-	DefaultRuleId           int64                  `protobuf:"varint,8,opt,name=default_rule_id,json=defaultRuleId,proto3" json:"default_rule_id,omitempty"`
-	ProxyAccept             string                 `protobuf:"bytes,9,opt,name=proxy_accept,json=proxyAccept,proto3" json:"proxy_accept,omitempty"`
-	MaxHandshakes           int32                  `protobuf:"varint,10,opt,name=max_handshakes,json=maxHandshakes,proto3" json:"max_handshakes,omitempty"`
-	HandshakeTimeoutSeconds int32                  `protobuf:"varint,11,opt,name=handshake_timeout_seconds,json=handshakeTimeoutSeconds,proto3" json:"handshake_timeout_seconds,omitempty"`
-	MinTlsVersion           string                 `protobuf:"bytes,12,opt,name=min_tls_version,json=minTlsVersion,proto3" json:"min_tls_version,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Id      int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Port    int32                  `protobuf:"varint,2,opt,name=port,proto3" json:"port,omitempty"`
+	Enabled bool                   `protobuf:"varint,3,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	// Deprecated: Marked as deprecated in api/control.proto.
+	Certificate string `protobuf:"bytes,4,opt,name=certificate,proto3" json:"certificate,omitempty"`
+	// Deprecated: Marked as deprecated in api/control.proto.
+	PrivateKey              string   `protobuf:"bytes,5,opt,name=private_key,json=privateKey,proto3" json:"private_key,omitempty"`
+	AllowedSni              []string `protobuf:"bytes,6,rep,name=allowed_sni,json=allowedSni,proto3" json:"allowed_sni,omitempty"`
+	RejectEmptySni          bool     `protobuf:"varint,7,opt,name=reject_empty_sni,json=rejectEmptySni,proto3" json:"reject_empty_sni,omitempty"`
+	DefaultRuleId           int64    `protobuf:"varint,8,opt,name=default_rule_id,json=defaultRuleId,proto3" json:"default_rule_id,omitempty"`
+	ProxyAccept             string   `protobuf:"bytes,9,opt,name=proxy_accept,json=proxyAccept,proto3" json:"proxy_accept,omitempty"`
+	MaxHandshakes           int32    `protobuf:"varint,10,opt,name=max_handshakes,json=maxHandshakes,proto3" json:"max_handshakes,omitempty"`
+	HandshakeTimeoutSeconds int32    `protobuf:"varint,11,opt,name=handshake_timeout_seconds,json=handshakeTimeoutSeconds,proto3" json:"handshake_timeout_seconds,omitempty"`
+	// Deprecated: Marked as deprecated in api/control.proto.
+	MinTlsVersion string `protobuf:"bytes,12,opt,name=min_tls_version,json=minTlsVersion,proto3" json:"min_tls_version,omitempty"`
+	// Explicit capability: shared listeners only inspect SNI and replay TLS bytes.
+	Passthrough   bool `protobuf:"varint,13,opt,name=passthrough,proto3" json:"passthrough,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SharedTLSInbound) Reset() {
@@ -902,6 +907,7 @@ func (x *SharedTLSInbound) GetEnabled() bool {
 	return false
 }
 
+// Deprecated: Marked as deprecated in api/control.proto.
 func (x *SharedTLSInbound) GetCertificate() string {
 	if x != nil {
 		return x.Certificate
@@ -909,6 +915,7 @@ func (x *SharedTLSInbound) GetCertificate() string {
 	return ""
 }
 
+// Deprecated: Marked as deprecated in api/control.proto.
 func (x *SharedTLSInbound) GetPrivateKey() string {
 	if x != nil {
 		return x.PrivateKey
@@ -958,11 +965,19 @@ func (x *SharedTLSInbound) GetHandshakeTimeoutSeconds() int32 {
 	return 0
 }
 
+// Deprecated: Marked as deprecated in api/control.proto.
 func (x *SharedTLSInbound) GetMinTlsVersion() string {
 	if x != nil {
 		return x.MinTlsVersion
 	}
 	return ""
+}
+
+func (x *SharedTLSInbound) GetPassthrough() bool {
+	if x != nil {
+		return x.Passthrough
+	}
+	return false
 }
 
 type ACMEHTTPEndpoint struct {
@@ -2908,13 +2923,13 @@ const file_api_control_proto_rawDesc = "" +
 	"\vserver_name\x18\x02 \x01(\tR\n" +
 	"serverName\x12\x17\n" +
 	"\aroot_ca\x18\x03 \x01(\tR\x06rootCa\x12\x12\n" +
-	"\x04alpn\x18\x04 \x03(\tR\x04alpn\"\xb4\x03\n" +
+	"\x04alpn\x18\x04 \x03(\tR\x04alpn\"\xe2\x03\n" +
 	"\x10SharedTLSInbound\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\x05R\x04port\x12\x18\n" +
-	"\aenabled\x18\x03 \x01(\bR\aenabled\x12 \n" +
-	"\vcertificate\x18\x04 \x01(\tR\vcertificate\x12\x1f\n" +
-	"\vprivate_key\x18\x05 \x01(\tR\n" +
+	"\aenabled\x18\x03 \x01(\bR\aenabled\x12$\n" +
+	"\vcertificate\x18\x04 \x01(\tB\x02\x18\x01R\vcertificate\x12#\n" +
+	"\vprivate_key\x18\x05 \x01(\tB\x02\x18\x01R\n" +
 	"privateKey\x12\x1f\n" +
 	"\vallowed_sni\x18\x06 \x03(\tR\n" +
 	"allowedSni\x12(\n" +
@@ -2923,8 +2938,9 @@ const file_api_control_proto_rawDesc = "" +
 	"\fproxy_accept\x18\t \x01(\tR\vproxyAccept\x12%\n" +
 	"\x0emax_handshakes\x18\n" +
 	" \x01(\x05R\rmaxHandshakes\x12:\n" +
-	"\x19handshake_timeout_seconds\x18\v \x01(\x05R\x17handshakeTimeoutSeconds\x12&\n" +
-	"\x0fmin_tls_version\x18\f \x01(\tR\rminTlsVersion\"b\n" +
+	"\x19handshake_timeout_seconds\x18\v \x01(\x05R\x17handshakeTimeoutSeconds\x12*\n" +
+	"\x0fmin_tls_version\x18\f \x01(\tB\x02\x18\x01R\rminTlsVersion\x12 \n" +
+	"\vpassthrough\x18\r \x01(\bR\vpassthrough\"b\n" +
 	"\x10ACMEHTTPEndpoint\x12\x12\n" +
 	"\x04port\x18\x01 \x01(\x05R\x04port\x12:\n" +
 	"\n" +

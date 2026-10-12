@@ -1,10 +1,11 @@
 package agent
 
 import (
+	"bufio"
+	"bytes"
 	"context"
-	"crypto/tls"
-	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"sync"
@@ -23,7 +24,6 @@ type inboundRoute struct {
 }
 type inboundSnapshot struct {
 	config  *pb.SharedTLSInbound
-	cert    *tls.Certificate
 	names   map[string]*inboundRoute
 	routes  map[int64]*inboundRoute
 	claimed map[string]bool
@@ -64,10 +64,14 @@ func (e *Engine) configureTLSInbounds(c *pb.ControlMessage, restart bool) []stri
 	if e.tlsInbounds == nil {
 		e.tlsInbounds = map[int64]*tlsInboundListener{}
 	}
+	var errs []string
 	wanted := map[int64]*pb.SharedTLSInbound{}
 	if c.Node != nil && c.Node.Enabled {
 		for _, cfg := range c.Node.TlsInbounds {
-			if cfg.Enabled {
+			if cfg.Enabled && !cfg.Passthrough {
+				errs = append(errs, fmt.Sprintf("TLS inbound %d: control configuration does not support SNI passthrough", cfg.Id))
+			}
+			if cfg.Enabled && cfg.Passthrough {
 				wanted[cfg.Id] = cfg
 			}
 		}
@@ -84,27 +88,13 @@ func (e *Engine) configureTLSInbounds(c *pb.ControlMessage, restart bool) []stri
 			delete(e.tlsInbounds, id)
 		}
 	}
-	var errs []string
 	for id, cfg := range wanted {
-		pair, err := tlsinbound.Certificate(cfg.Certificate, cfg.PrivateKey)
-		if err != nil {
-			if l := e.tlsInbounds[id]; l != nil {
-				l.cancel()
-				l.ln.Close()
-				for _, r := range l.snapshot.Load().routes {
-					r.l.cancel()
-				}
-				delete(e.tlsInbounds, id)
-			}
-			errs = append(errs, fmt.Sprintf("TLS inbound %d: certificate unavailable", id))
-			continue
-		}
 		l := e.tlsInbounds[id]
 		var old *inboundSnapshot
 		if l != nil {
 			old = l.snapshot.Load()
 		}
-		snapshot := &inboundSnapshot{config: cfg, cert: pair, names: map[string]*inboundRoute{}, routes: map[int64]*inboundRoute{}, claimed: map[string]bool{}}
+		snapshot := &inboundSnapshot{config: cfg, names: map[string]*inboundRoute{}, routes: map[int64]*inboundRoute{}, claimed: map[string]bool{}}
 		for _, rule := range c.Rules {
 			if rule.TlsInboundId == id {
 				for _, name := range rule.SniNames {
@@ -122,7 +112,7 @@ func (e *Engine) configureTLSInbounds(c *pb.ControlMessage, restart bool) []stri
 			allow := tlsinbound.Config{AllowedSNI: cfg.AllowedSni}
 			valid := true
 			for _, name := range names {
-				if !allow.Allows(name) || pair.Leaf.VerifyHostname(name) != nil || snapshot.names[name] != nil {
+				if !allow.Allows(name) || snapshot.names[name] != nil {
 					valid = false
 				}
 			}
@@ -236,75 +226,29 @@ func (e *Engine) serveTLSInbound(l *tlsInboundListener, raw net.Conn, peer strin
 	if err != nil {
 		return
 	}
-	var selected *inboundRoute
-	var stopRoute func() bool
-	defer func() {
-		if selected != nil {
-			selected.l.runtime.close()
-			selected.account.active.Add(-1)
-		}
-		if stopRoute != nil {
-			stopRoute()
-		}
-	}()
-	config := &tls.Config{MinVersion: tls.VersionTLS12, SessionTicketsDisabled: true}
-	if cfg.MinTlsVersion == "1.3" {
-		config.MinVersion = tls.VersionTLS13
-	}
-	config.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
-		if l.ctx.Err() != nil {
-			return nil, errors.New("listener closed")
-		}
-		if selected == nil {
-			name := hello.ServerName
-			if name == "" && cfg.RejectEmptySni {
-				return nil, errors.New("missing SNI")
-			}
-			if name != "" {
-				var err error
-				name, err = tlsinbound.Name(name)
-				if err != nil {
-					return nil, err
-				}
-			}
-			allow := tlsinbound.Config{AllowedSNI: cfg.AllowedSni}
-			if name != "" && !allow.Allows(name) {
-				return nil, errors.New("SNI not allowed")
-			}
-			route := snapshot.names[name]
-			// A disabled/paused claimed name never falls through to a default rule.
-			if route == nil && !snapshot.claimed[name] {
-				route = snapshot.routes[cfg.DefaultRuleId]
-			}
-			if route == nil || route.l.ctx.Err() != nil || !route.account.acquire() {
-				return nil, errors.New("route unavailable")
-			}
-			if !route.l.runtime.open() {
-				route.account.active.Add(-1)
-				return nil, errors.New("connection limit")
-			}
-			selected = route
-			stopRoute = context.AfterFunc(route.l.ctx, func() { raw.Close() })
-		}
-		if selected.l.ctx.Err() != nil || !selected.account.valid() {
-			return nil, errors.New("route unavailable")
-		}
-		if err := tlsinbound.ALPN(selected.l.rule.TlsAlpn); err != nil {
-			return nil, err
-		}
-		child := &tls.Config{MinVersion: config.MinVersion, Certificates: []tls.Certificate{*snapshot.cert}, NextProtos: selected.l.rule.TlsAlpn, SessionTicketsDisabled: true}
-		child.VerifyConnection = func(tls.ConnectionState) error {
-			if selected.l.ctx.Err() != nil || !selected.account.valid() {
-				return errors.New("route unavailable")
-			}
-			return nil
-		}
-		return child, nil
-	}
-	secured := tls.Server(client, config)
-	if err = secured.HandshakeContext(handshakeCtx); err != nil || selected == nil {
+	name, prefix, err := tlsinbound.ReadClientHello(client)
+	if err != nil || name == "" && cfg.RejectEmptySni {
 		return
 	}
+	allow := tlsinbound.Config{AllowedSNI: cfg.AllowedSni}
+	if name != "" && !allow.Allows(name) {
+		return
+	}
+	selected := snapshot.names[name]
+	// Paused or unavailable claimed names cannot fall through to another user.
+	if selected == nil && !snapshot.claimed[name] {
+		selected = snapshot.routes[cfg.DefaultRuleId]
+	}
+	if selected == nil || selected.l.ctx.Err() != nil || !selected.account.acquire() {
+		return
+	}
+	defer selected.account.active.Add(-1)
+	if !selected.l.runtime.open() {
+		return
+	}
+	defer selected.l.runtime.close()
+	stopRoute := context.AfterFunc(selected.l.ctx, func() { raw.Close() })
+	defer stopRoute()
 	if !stopHandshake() || handshakeCtx.Err() != nil {
 		return
 	}
@@ -314,5 +258,6 @@ func (e *Engine) serveTLSInbound(l *tlsInboundListener, raw net.Conn, peer strin
 	if selected.l.ctx.Err() != nil || !selected.account.valid() {
 		return
 	}
-	e.forwardPrepared(selected.l, secured, addresses, selected.account, selected.count)
+	replay := &bufferedConn{Conn: client, reader: bufio.NewReader(io.MultiReader(bytes.NewReader(prefix), client))}
+	e.forwardPrepared(selected.l, replay, addresses, selected.account, selected.count)
 }

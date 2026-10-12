@@ -8,8 +8,6 @@ import (
 	pb "github.com/nekopass/nekopass/internal/protocol"
 	"github.com/nekopass/nekopass/internal/tlsinbound"
 	"net/http"
-	"reflect"
-	"time"
 )
 
 func (s *Server) tlsInbounds(w http.ResponseWriter, r *http.Request) {
@@ -27,7 +25,7 @@ func (s *Server) tlsInbounds(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "节点不存在")
 		return
 	}
-	rows, err := s.Pool.Query(r.Context(), `SELECT t.id,t.node_id,t.config,t.certificate,t.certificate_status,t.certificate_error,t.not_after,(SELECT count(*) FROM rules WHERE tls_inbound_id=t.id) rule_count FROM node_tls_inbounds t WHERE node_id=$1 ORDER BY t.id`, id)
+	rows, err := s.Pool.Query(r.Context(), `SELECT t.id,t.node_id,t.config,(SELECT count(*) FROM rules WHERE tls_inbound_id=t.id) rule_count FROM node_tls_inbounds t WHERE node_id=$1 ORDER BY t.id`, id)
 	if err != nil {
 		s.dbError(w, err)
 		return
@@ -97,19 +95,9 @@ func (s *Server) saveTLSInbound(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	var oldRaw []byte
-	var cert, key string
-	var expiry *time.Time
-	var generation int64
-	var old tlsinbound.Config
 	if in.ID != 0 {
-		err = tx.QueryRow(ctx, "SELECT config,certificate,private_key,not_after,generation FROM node_tls_inbounds WHERE id=$1 AND node_id=$2 FOR UPDATE", in.ID, node).Scan(&oldRaw, &cert, &key, &expiry, &generation)
-		if err != nil {
+		if err = tx.QueryRow(ctx, "SELECT id FROM node_tls_inbounds WHERE id=$1 AND node_id=$2 FOR UPDATE", in.ID, node).Scan(&exists); err != nil {
 			fail(w, 404, "共享 TLS 入口不存在")
-			return
-		}
-		if json.Unmarshal(oldRaw, &old) != nil {
-			fail(w, 500, "入口配置无效")
 			return
 		}
 	}
@@ -131,46 +119,7 @@ func (s *Server) saveTLSInbound(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	status := "unconfigured"
-	if cfg.Enabled && cfg.TLS.ServerName != "" {
-		switch cfg.TLS.CertificateMode {
-		case "self_signed":
-			if cert == "" || old.TLS.ServerName != cfg.TLS.ServerName || old.TLS.CertificateMode != "self_signed" || expiry == nil || time.Until(*expiry) < 30*24*time.Hour {
-				var until time.Time
-				cert, key, until, err = SelfSignedTunnelCertificate(cfg.TLS.ServerName)
-				if err != nil {
-					s.dbError(w, err)
-					return
-				}
-				expiry = &until
-			}
-			status = "ready"
-		case "import":
-			if cfg.TLS.Certificate != "" || cfg.TLS.PrivateKey != "" {
-				cert, key = cfg.TLS.Certificate, cfg.TLS.PrivateKey
-			} else if old.TLS.CertificateMode != "import" {
-				fail(w, 400, "请填写证书和匹配私钥")
-				return
-			}
-			until, e := validateTunnelCertificate(cfg.TLS.ServerName, cert, key)
-			if e != nil {
-				fail(w, 400, e.Error())
-				return
-			}
-			expiry = &until
-			status = "ready"
-		default:
-			if old.TLS.ServerName != cfg.TLS.ServerName || old.TLS.CertificateMode != cfg.TLS.CertificateMode {
-				cert, key = "", ""
-				expiry = nil
-			}
-			status = "pending"
-			if reflect.DeepEqual(cfg.TLS, old.TLS) && expiry != nil && time.Until(*expiry) > 30*24*time.Hour {
-				status = "ready"
-			}
-		}
-	}
-	// Certificate changes must not silently invalidate another user's registered name.
+	// Allowlist edits must not silently invalidate existing registered names.
 	check, err := tx.Query(ctx, "SELECT name FROM rule_sni_names WHERE tls_inbound_id=$1", in.ID)
 	if err != nil {
 		s.dbError(w, err)
@@ -184,26 +133,17 @@ func (s *Server) saveTLSInbound(w http.ResponseWriter, r *http.Request) {
 		}
 		names = append(names, value)
 	}
+	if err == nil {
+		err = check.Err()
+	}
 	check.Close()
 	if err != nil {
 		s.dbError(w, err)
 		return
 	}
-	var pairNames func(string) bool
-	if cert == "" {
-		pairNames = func(n string) bool { return tlsinbound.CoversDomain(cfg.TLS.ServerName, n) }
-	}
-	if cert != "" {
-		pair, e := tlsinbound.KeyPair(cert, key)
-		if e != nil {
-			fail(w, 400, e.Error())
-			return
-		}
-		pairNames = func(n string) bool { return pair.Leaf.VerifyHostname(n) == nil }
-	}
 	for _, name := range names {
-		if !cfg.Allows(name) || pairNames != nil && !pairNames(name) {
-			fail(w, 409, "新允许范围或证书未覆盖已有规则的 SNI，请先调整规则")
+		if !cfg.Allows(name) {
+			fail(w, 409, "新允许范围未覆盖已有规则的 SNI，请先调整规则")
 			return
 		}
 	}
@@ -224,8 +164,7 @@ func (s *Server) saveTLSInbound(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	generation++
-	_, err = tx.Exec(ctx, "UPDATE node_tls_inbounds SET config=$2,port=$3,certificate=$4,private_key=$5,not_after=$6,certificate_status=$7,certificate_error='',generation=$8 WHERE id=$1", in.ID, data, cfg.Port, cert, key, expiry, status, generation)
+	_, err = tx.Exec(ctx, "UPDATE node_tls_inbounds SET config=$2,port=$3,generation=generation+1 WHERE id=$1", in.ID, data, cfg.Port)
 	if err != nil {
 		fail(w, 409, "共享入口端口冲突")
 		return
@@ -329,7 +268,7 @@ func (s *Server) tlsInboundPolicy(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) tlsInboundChoices(w http.ResponseWriter, r *http.Request) {
 	u := ruleActor(r)
-	rows, err := s.Pool.Query(r.Context(), `SELECT t.id,t.node_id,t.port,t.config->>'name' name,t.config->'allowed_sni' allowed_sni,t.config#>>'{tls,certificate_mode}' certificate_mode,t.certificate_status FROM node_tls_inbounds t JOIN user_nodes un ON un.node_id=t.node_id AND un.user_id=$1 JOIN nodes n ON n.id=t.node_id WHERE n.ingress_enabled AND t.config->>'enabled'='true' ORDER BY t.id`, u.ID)
+	rows, err := s.Pool.Query(r.Context(), `SELECT t.id,t.node_id,t.port,t.config->>'name' name,t.config->'allowed_sni' allowed_sni FROM node_tls_inbounds t JOIN user_nodes un ON un.node_id=t.node_id AND un.user_id=$1 JOIN nodes n ON n.id=t.node_id WHERE n.ingress_enabled AND t.config->>'enabled'='true' ORDER BY t.id`, u.ID)
 	if err != nil {
 		s.dbError(w, err)
 		return
@@ -345,7 +284,7 @@ func appendTLSInboundControl(ctx context.Context, tx pgx.Tx, node int64, out *pb
 	if err := tx.QueryRow(ctx, "SELECT tls_inbound_only FROM nodes WHERE id=$1", node).Scan(&out.Node.TlsInboundOnly); err != nil {
 		return err
 	}
-	rows, err := tx.Query(ctx, "SELECT t.id,t.config,t.certificate,t.private_key,COALESCE((SELECT r.id FROM rules r JOIN users u ON u.id=r.user_id WHERE r.id=(t.config->>'default_rule_id')::bigint AND r.tls_inbound_id=t.id AND u.is_admin),0) FROM node_tls_inbounds t WHERE t.node_id=$1 ORDER BY t.id", node)
+	rows, err := tx.Query(ctx, "SELECT t.id,t.config,COALESCE((SELECT r.id FROM rules r JOIN users u ON u.id=r.user_id WHERE r.id=(t.config->>'default_rule_id')::bigint AND r.tls_inbound_id=t.id AND u.is_admin),0) FROM node_tls_inbounds t WHERE t.node_id=$1 ORDER BY t.id", node)
 	if err != nil {
 		return err
 	}
@@ -353,8 +292,7 @@ func appendTLSInboundControl(ctx context.Context, tx pgx.Tx, node int64, out *pb
 	for rows.Next() {
 		var id, defaultRule int64
 		var raw []byte
-		var cert, key string
-		if err = rows.Scan(&id, &raw, &cert, &key, &defaultRule); err != nil {
+		if err = rows.Scan(&id, &raw, &defaultRule); err != nil {
 			return err
 		}
 		cfg := tlsinbound.DefaultConfig()
@@ -364,7 +302,7 @@ func appendTLSInboundControl(ctx context.Context, tx pgx.Tx, node int64, out *pb
 		if err = cfg.Normalize(); err != nil {
 			return err
 		}
-		out.Node.TlsInbounds = append(out.Node.TlsInbounds, &pb.SharedTLSInbound{Id: id, Port: int32(cfg.Port), Enabled: cfg.Enabled, Certificate: cert, PrivateKey: key, AllowedSni: cfg.AllowedSNI, RejectEmptySni: cfg.RejectEmptySNI, DefaultRuleId: defaultRule, ProxyAccept: cfg.ProxyAccept, MaxHandshakes: int32(cfg.MaxHandshakes), HandshakeTimeoutSeconds: int32(cfg.HandshakeTimeoutSeconds), MinTlsVersion: cfg.MinTLSVersion})
+		out.Node.TlsInbounds = append(out.Node.TlsInbounds, &pb.SharedTLSInbound{Id: id, Port: int32(cfg.Port), Enabled: cfg.Enabled, AllowedSni: cfg.AllowedSNI, RejectEmptySni: cfg.RejectEmptySNI, DefaultRuleId: defaultRule, ProxyAccept: cfg.ProxyAccept, MaxHandshakes: int32(cfg.MaxHandshakes), HandshakeTimeoutSeconds: int32(cfg.HandshakeTimeoutSeconds), Passthrough: true})
 	}
 	return rows.Err()
 }
@@ -380,8 +318,7 @@ func validateTLSRule(ctx context.Context, tx pgx.Tx, in *RuleInput, id int64) er
 		return nil
 	}
 	var raw []byte
-	var cert, key string
-	if err := tx.QueryRow(ctx, "SELECT config,certificate,private_key FROM node_tls_inbounds WHERE id=$1 AND node_id=$2", in.TLSInboundID, in.NodeID).Scan(&raw, &cert, &key); err != nil {
+	if err := tx.QueryRow(ctx, "SELECT config FROM node_tls_inbounds WHERE id=$1 AND node_id=$2", in.TLSInboundID, in.NodeID).Scan(&raw); err != nil {
 		return errors.New("共享 TLS 入口不存在或不属于当前节点")
 	}
 	var cfg tlsinbound.Config
@@ -391,51 +328,14 @@ func validateTLSRule(ctx context.Context, tx pgx.Tx, in *RuleInput, id int64) er
 	if !cfg.Enabled && id == 0 {
 		return errors.New("共享 TLS 入口已关闭")
 	}
-	var covers func(string) bool
-	if cert != "" {
-		pair, err := tlsinbound.KeyPair(cert, key)
-		if err != nil {
-			return err
-		}
-		covers = func(n string) bool { return pair.Leaf.VerifyHostname(n) == nil }
-	} else {
-		// Pending ACME certificates still enforce the configured certificate domain.
-		covers = func(n string) bool { return tlsinbound.CoversDomain(cfg.TLS.ServerName, n) }
-	}
 	for _, name := range in.SNINames {
 		if !cfg.Allows(name) {
 			return errors.New("SNI 不在管理员允许范围内")
 		}
-		if !covers(name) {
-			return errors.New("共享入口证书未覆盖该 SNI")
-		}
+
 	}
 	return nil
 }
-func appendInboundChallenges(ctx context.Context, tx pgx.Tx, node int64, out *pb.ControlMessage) error {
-	rows, err := tx.Query(ctx, `SELECT (t.config#>>'{tls,http_challenge_port}')::integer,c.domain,c.token,c.key_authorization,c.revision,extract(epoch FROM c.expires_at)::bigint FROM node_acme_challenges c JOIN node_tls_inbounds t ON t.id=c.inbound_id WHERE c.node_id=$1 AND c.expires_at>now() AND t.config->>'enabled'='true' AND t.config#>>'{tls,certificate_mode}'='acme_http' ORDER BY t.id`, node)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	endpoints := map[int32]*pb.ACMEHTTPEndpoint{}
-	for rows.Next() {
-		var port int32
-		v := &pb.ACMEChallenge{}
-		if err = rows.Scan(&port, &v.Domain, &v.Token, &v.KeyAuthorization, &v.Revision, &v.ExpiresUnix); err != nil {
-			return err
-		}
-		endpoint := endpoints[port]
-		if endpoint == nil {
-			endpoint = &pb.ACMEHTTPEndpoint{Port: port}
-			endpoints[port] = endpoint
-			out.Node.AcmeHttp = append(out.Node.AcmeHttp, endpoint)
-		}
-		endpoint.Challenges = append(endpoint.Challenges, v)
-	}
-	return rows.Err()
-}
-
 func touchTLSInboundNode(ctx context.Context, tx pgx.Tx, node int64) error {
 	if _, err := tx.Exec(ctx, "UPDATE nodes SET config_revision=(SELECT value+1 FROM revision WHERE id=1) WHERE id=$1", node); err != nil {
 		return err

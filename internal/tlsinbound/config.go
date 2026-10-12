@@ -1,42 +1,25 @@
 package tlsinbound
 
 import (
-	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"golang.org/x/net/idna"
 	"net/netip"
-	"net/url"
 	"slices"
 	"strings"
-	"time"
 )
 
-type CertificateConfig struct {
-	ServerName        string            `json:"server_name"`
-	CertificateMode   string            `json:"certificate_mode"`
-	Certificate       string            `json:"certificate"`
-	PrivateKey        string            `json:"private_key"`
-	ACMEEmail         string            `json:"acme_email"`
-	ACMEDirectory     string            `json:"acme_directory"`
-	ACMERootCA        string            `json:"acme_root_ca"`
-	HTTPChallengePort int               `json:"http_challenge_port"`
-	DNSProvider       string            `json:"dns_provider"`
-	DNSCredentials    map[string]string `json:"dns_credentials"`
-}
 type Config struct {
-	Name                    string            `json:"name"`
-	Port                    int               `json:"port"`
-	Enabled                 bool              `json:"enabled"`
-	ProxyAccept             string            `json:"proxy_accept"`
-	AllowedSNI              []string          `json:"allowed_sni"`
-	RejectEmptySNI          bool              `json:"reject_empty_sni"`
-	UnknownSNIAction        string            `json:"unknown_sni_action"`
-	DefaultRuleID           int64             `json:"default_rule_id"`
-	MaxHandshakes           int               `json:"max_handshakes"`
-	HandshakeTimeoutSeconds int               `json:"handshake_timeout_seconds"`
-	MinTLSVersion           string            `json:"min_tls_version"`
-	TLS                     CertificateConfig `json:"tls"`
+	Name                    string   `json:"name"`
+	Port                    int      `json:"port"`
+	Enabled                 bool     `json:"enabled"`
+	ProxyAccept             string   `json:"proxy_accept"`
+	AllowedSNI              []string `json:"allowed_sni"`
+	RejectEmptySNI          bool     `json:"reject_empty_sni"`
+	UnknownSNIAction        string   `json:"unknown_sni_action"`
+	DefaultRuleID           int64    `json:"default_rule_id"`
+	MaxHandshakes           int      `json:"max_handshakes"`
+	HandshakeTimeoutSeconds int      `json:"handshake_timeout_seconds"`
 }
 type OriginTLS struct {
 	Enabled    bool     `json:"enabled"`
@@ -46,7 +29,7 @@ type OriginTLS struct {
 }
 
 func DefaultConfig() Config {
-	return Config{Enabled: true, Port: 443, ProxyAccept: "off", AllowedSNI: []string{}, RejectEmptySNI: true, UnknownSNIAction: "reject", MaxHandshakes: 128, HandshakeTimeoutSeconds: 5, MinTLSVersion: "1.2", TLS: CertificateConfig{CertificateMode: "self_signed", ACMEDirectory: "https://acme-v02.api.letsencrypt.org/directory", HTTPChallengePort: 80, DNSCredentials: map[string]string{}}}
+	return Config{Enabled: true, Port: 443, ProxyAccept: "off", AllowedSNI: []string{}, RejectEmptySNI: true, UnknownSNIAction: "reject", MaxHandshakes: 128, HandshakeTimeoutSeconds: 5}
 }
 func Name(raw string) (string, error) {
 	raw = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(raw), "."))
@@ -144,13 +127,7 @@ func (c *Config) Normalize() error {
 		c.HandshakeTimeoutSeconds = d.HandshakeTimeoutSeconds
 	}
 	if c.MaxHandshakes < 1 || c.MaxHandshakes > 4096 || c.HandshakeTimeoutSeconds < 1 || c.HandshakeTimeoutSeconds > 30 {
-		return errors.New("并发握手须为 1–4096，握手超时须为 1–30 秒")
-	}
-	if c.MinTLSVersion == "" {
-		c.MinTLSVersion = "1.2"
-	}
-	if c.MinTLSVersion != "1.2" && c.MinTLSVersion != "1.3" {
-		return errors.New("最低 TLS 版本须为 1.2 或 1.3")
+		return errors.New("ClientHello 并发读取须为 1–4096，读取超时须为 1–30 秒")
 	}
 	if len(c.AllowedSNI) > 128 {
 		return errors.New("SNI 允许范围最多 128 条")
@@ -170,57 +147,7 @@ func (c *Config) Normalize() error {
 	}
 	slices.Sort(out)
 	c.AllowedSNI = slices.Compact(out)
-	if c.TLS.CertificateMode == "" {
-		c.TLS.CertificateMode = d.TLS.CertificateMode
-	}
-	if c.TLS.ACMEDirectory == "" {
-		c.TLS.ACMEDirectory = d.TLS.ACMEDirectory
-	}
-	if c.TLS.HTTPChallengePort == 0 {
-		c.TLS.HTTPChallengePort = 80
-	}
-	if c.TLS.DNSCredentials == nil {
-		c.TLS.DNSCredentials = map[string]string{}
-	}
-	domain := strings.TrimSpace(c.TLS.ServerName)
-	wild := strings.HasPrefix(domain, "*.")
-	if domain != "" {
-		n, err := Name(strings.TrimPrefix(domain, "*."))
-		if err != nil {
-			return err
-		}
-		if wild {
-			n = "*." + n
-		}
-		c.TLS.ServerName = n
-	}
-	if c.Enabled && domain == "" {
-		return errors.New("请填写证书域名")
-	}
-	if c.TLS.CertificateMode != "self_signed" && c.TLS.CertificateMode != "import" && c.TLS.CertificateMode != "acme_dns" && c.TLS.CertificateMode != "acme_http" {
-		return errors.New("证书模式无效")
-	}
-	if c.TLS.CertificateMode == "acme_http" && c.TLS.HTTPChallengePort == c.Port {
-		return errors.New("HTTP 验证端口不能与 TLS 监听端口相同")
-	}
-	if c.TLS.CertificateMode == "acme_http" && wild {
-		return errors.New("通配符证书须使用 DNS 自动申请")
-	}
-	if c.TLS.HTTPChallengePort < 1 || c.TLS.HTTPChallengePort > 65535 {
-		return errors.New("HTTP 验证端口无效")
-	}
-	if c.TLS.CertificateMode == "acme_dns" || c.TLS.CertificateMode == "acme_http" {
-		u, err := url.Parse(c.TLS.ACMEDirectory)
-		if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
-			return errors.New("ACME 服务地址须为 HTTPS URL")
-		}
-		if c.Enabled && c.TLS.ACMEEmail == "" {
-			return errors.New("请填写 ACME 邮箱")
-		}
-		if c.Enabled && c.TLS.CertificateMode == "acme_dns" && (len(c.TLS.DNSCredentials) == 0 || !slices.Contains([]string{"cloudflare", "alidns", "dnspod"}, c.TLS.DNSProvider)) {
-			return errors.New("请配置支持的 DNS 服务商和凭据")
-		}
-	}
+
 	return nil
 }
 func (o *OriginTLS) Normalize() error {
@@ -241,40 +168,4 @@ func (o *OriginTLS) Normalize() error {
 		}
 	}
 	return ALPN(o.ALPN)
-}
-func Certificate(cert, key string) (*tls.Certificate, error) {
-	pair, err := KeyPair(cert, key)
-	if err != nil {
-		return nil, err
-	}
-	if pair.Leaf.NotBefore.After(time.Now()) || !pair.Leaf.NotAfter.After(time.Now()) {
-		return nil, errors.New("TLS 入站证书无效或已过期")
-	}
-	return pair, nil
-}
-func KeyPair(cert, key string) (*tls.Certificate, error) {
-	pair, err := tls.X509KeyPair([]byte(cert), []byte(key))
-	if err != nil || len(pair.Certificate) == 0 {
-		return nil, errors.New("TLS 入站证书与私钥无效")
-	}
-	pair.Leaf, err = x509.ParseCertificate(pair.Certificate[0])
-	if err != nil {
-		return nil, errors.New("TLS 入站证书无效")
-	}
-	return &pair, nil
-}
-
-func CoversDomain(domain, name string) bool {
-	if domain == name {
-		return true
-	}
-	if !strings.HasPrefix(domain, "*.") {
-		return false
-	}
-	suffix := domain[1:]
-	if !strings.HasSuffix(name, suffix) {
-		return false
-	}
-	prefix := strings.TrimSuffix(name, suffix)
-	return prefix != "" && !strings.Contains(prefix, ".")
 }

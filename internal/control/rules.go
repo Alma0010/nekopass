@@ -68,6 +68,11 @@ func (in *RuleInput) normalize() error {
 		if err != nil {
 			return err
 		}
+		if in.OriginTLS.Enabled || len(in.TLSALPN) != 0 {
+			return errors.New("共享 TLS 入站只按 SNI 透传，不支持回源 TLS 或入站 ALPN 设置")
+		}
+		in.OriginTLS = tlsinbound.OriginTLS{}
+		in.TLSALPN = []string{}
 		in.ListenPort = 0
 		in.ProxyAccept = "off"
 	} else {
@@ -339,10 +344,9 @@ func (s *Server) rules(w http.ResponseWriter, r *http.Request) {
  WHEN u.quota_bytes>=0 AND (u.quota_bytes<=u.traffic_base_bytes+COALESCE((SELECT sum(traffic) FROM current_grants WHERE user_id=u.id),0) OR u.quota_bytes<u.traffic_base_bytes+COALESCE((SELECT sum(issued-released+unlimited_spent) FROM current_grants WHERE user_id=u.id),0)) THEN 'quota_exhausted'
 	 WHEN n.last_seen IS NULL OR n.last_seen<now()-interval '12 seconds' OR (en.id IS NOT NULL AND (en.last_seen IS NULL OR en.last_seen<now()-interval '12 seconds')) THEN 'offline'
 	 WHEN $3 AND (n.protocol_version<14 OR (en.id IS NOT NULL AND en.protocol_version<14)) THEN 'upgrade_required'
- WHEN (r.tls_inbound_id IS NOT NULL OR r.origin_tls->>'enabled'='true') AND n.protocol_version<20 THEN 'upgrade_required'
+ WHEN (r.tls_inbound_id IS NOT NULL AND n.protocol_version<21) OR (r.origin_tls->>'enabled'='true' AND n.protocol_version<20) THEN 'upgrade_required'
  WHEN r.tls_inbound_id IS NULL AND n.tls_inbound_only AND r.protocol='tcp' THEN 'tls_required'
  WHEN r.tls_inbound_id IS NOT NULL AND ti.config->>'enabled'<>'true' THEN 'inbound_disabled'
- WHEN r.tls_inbound_id IS NOT NULL AND (ti.certificate='' OR ti.not_after<=now()) THEN 'certificate_pending'
  WHEN (r.proxy_accept<>'off' OR ti.config->>'proxy_accept'='auto') AND $4 THEN 'proxy_untrusted'
  WHEN en.tunnel_protocol IN ('plain_udp','dtls_udp') AND (n.protocol_version<17 OR en.protocol_version<17) THEN 'upgrade_required'
  WHEN r.protocol<>'tcp' AND (n.protocol_version<16 OR (en.id IS NOT NULL AND en.protocol_version<16)) THEN 'upgrade_required'

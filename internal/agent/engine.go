@@ -318,6 +318,11 @@ func (e *Engine) forward(l *listener, client net.Conn, a *Account, count *atomic
 	e.forwardPrepared(l, effective, addresses, a, count)
 }
 func (e *Engine) forwardPrepared(l *listener, client net.Conn, addresses proxyAddresses, a *Account, count *atomic.Int64) {
+	// A shared SNI listener must never terminate or wrap the client's TLS session.
+	if l.rule.TlsInboundId != 0 && l.rule.OriginTls.GetEnabled() {
+		return
+	}
+
 	activity := &atomic.Int64{}
 	activity.Store(time.Now().UnixNano())
 	ctx, cancel := context.WithCancel(context.WithValue(l.ctx, activityKey{}, activity))
@@ -486,7 +491,7 @@ func (e *Engine) Report() (*pb.AgentMessage, error) {
 		a.mu.Lock()
 		defer a.mu.Unlock()
 	}
-	r := &pb.AgentMessage{ProtocolVersion: 20, AgentVersion: release.Version, UpdateSupported: e.updateDirectory != "", UpdateStatus: e.readUpdateStatus(), AcmeAck: e.acmeAck.Load(), Probe: e.probe.Load(), InstanceId: e.state.Instance, AppliedRevision: e.revision, Error: e.syncError, ActiveConnections: e.connections.Load(), DdnsStatus: e.ddnsStatus.Load(), PublicIp: e.publicIP.Load(), IpRecoveryStatus: e.ipRecoveryStatus.Load()}
+	r := &pb.AgentMessage{ProtocolVersion: 21, AgentVersion: release.Version, UpdateSupported: e.updateDirectory != "", UpdateStatus: e.readUpdateStatus(), AcmeAck: e.acmeAck.Load(), Probe: e.probe.Load(), InstanceId: e.state.Instance, AppliedRevision: e.revision, Error: e.syncError, ActiveConnections: e.connections.Load(), DdnsStatus: e.ddnsStatus.Load(), PublicIp: e.publicIP.Load(), IpRecoveryStatus: e.ipRecoveryStatus.Load()}
 	pending, err := e.state.RestorePending()
 	if err != nil {
 		return nil, err

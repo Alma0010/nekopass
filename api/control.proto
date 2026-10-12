@@ -82,11 +82,13 @@ message Rule {
 message OriginTLSConfig { bool enabled = 1; string server_name = 2; string root_ca = 3; repeated string alpn = 4; }
 message SharedTLSInbound {
  int64 id = 1; int32 port = 2; bool enabled = 3;
- string certificate = 4; string private_key = 5;
+ string certificate = 4 [deprecated = true]; string private_key = 5 [deprecated = true];
  repeated string allowed_sni = 6; bool reject_empty_sni = 7;
  int64 default_rule_id = 8; string proxy_accept = 9;
  int32 max_handshakes = 10; int32 handshake_timeout_seconds = 11;
- string min_tls_version = 12;
+ string min_tls_version = 12 [deprecated = true];
+ // Explicit capability: shared listeners only inspect SNI and replay TLS bytes.
+ bool passthrough = 13;
 }
 message ACMEHTTPEndpoint { int32 port = 1; repeated ACMEChallenge challenges = 2; }
 message TunnelLink {

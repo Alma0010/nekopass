@@ -329,7 +329,7 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 			return nil, e
 		}
 		v.OriginTls = &pb.OriginTLSConfig{Enabled: originConfig.Enabled, ServerName: originConfig.ServerName, RootCa: originConfig.RootCA, Alpn: originConfig.ALPN}
-		if (v.TlsInboundId != 0 || originConfig.Enabled) && r.ProtocolVersion < 20 {
+		if v.TlsInboundId != 0 && r.ProtocolVersion < 21 || originConfig.Enabled && r.ProtocolVersion < 20 {
 			v.Enabled = false
 		}
 		v.ProxyTrustedCidrs = settings.ProxyTrustedCIDRs
@@ -410,11 +410,11 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 	if e = appendTLSControl(ctx, tx, nodeID, out); e != nil {
 		return nil, e
 	}
-	if r.ProtocolVersion >= 20 {
-		if e = appendInboundChallenges(ctx, tx, nodeID, out); e != nil {
-			return nil, e
-		}
+	// Legacy agents terminate TLS. Do not send them shared listener resources.
+	if r.ProtocolVersion < 21 {
+		out.Node.TlsInbounds = nil
 	}
+
 	tlsVersions := map[int64]int{}
 	for _, rule := range out.Rules {
 		if rule.EgressNodeId != 0 {
