@@ -53,6 +53,8 @@ wget https://github.com/hajidishu/nekopass/releases/latest/download/install-pane
 
 安装完成显示管理员账号和随机密码。网页默认 `8080`，节点控制端口 `9443`；网页 HTTPS 自行配置 Nginx。
 
+清空数据重新安装：`sudo bash install-panel.sh --reinstall`。会删除全部面板数据并生成新的管理员密码，执行前自行备份；加 `--yes` 不再确认。
+
 ## 安装节点
 
 在后台「节点管理」复制安装命令，到节点服务器以 root 执行。
@@ -105,7 +107,7 @@ pwsh -File scripts/package-panel.ps1  # 面板和节点完整发布包
 pwsh -File scripts/package-agent.ps1  # 仅节点发布文件
 ```
 
-产物位于 `dist/oss/nekopass/`，可用 `-Version v0.18.1` 指定版本号。
+产物位于 `dist/oss/nekopass/`，可用 `-Version v0.18.2` 指定版本号。
 
 ## 如何贡献？
 

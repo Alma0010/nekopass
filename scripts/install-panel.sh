@@ -7,10 +7,10 @@ write_manager_payload() { return 1; }
 write_updater_payload() { return 1; }
 # PACKAGED_UPDATER
 DEFAULT_DOWNLOAD_BASE='https://github.com/hajidishu/nekopass/releases/download'
-RELEASE_VERSION='v0.18.1'; DOWNLOAD_BASE=$DEFAULT_DOWNLOAD_BASE; PACKAGE_URL=''; PACKAGE=''; SOURCE_DIR=''
+RELEASE_VERSION='v0.18.2'; DOWNLOAD_BASE=$DEFAULT_DOWNLOAD_BASE; PACKAGE_URL=''; PACKAGE=''; SOURCE_DIR=''
 SERVICE='nekopass'; HOST=''; AGENT_HOST=''; AGENT_PORT=''; HTTP_PORT=8080; GRPC_PORT=9443; DB_PORT=''; PG_VERSION=''
 PG_SOURCE=system; ADMIN=admin; SITE=Nekopass; TLS_MODE=plain; TLS_CERT=''; TLS_KEY=''
-AGENT_INSTALLER='https://github.com/hajidishu/nekopass/releases/latest/download/install-agent.sh'; AGENT_RELEASES='https://github.com/hajidishu/nekopass/releases/download'; FIREWALL=auto; YES=0; SKIP_DEPS=0; DRY_RUN=0; WORK=''
+AGENT_INSTALLER='https://github.com/hajidishu/nekopass/releases/latest/download/install-agent.sh'; AGENT_RELEASES='https://github.com/hajidishu/nekopass/releases/download'; FIREWALL=auto; YES=0; SKIP_DEPS=0; DRY_RUN=0; REINSTALL=0; WORK=''
 die() { printf '[nekopass] %s\n' "$*" >&2; exit 1; }
 log() { printf '[nekopass] %s\n' "$*"; }
 postgres_run() { (cd / && runuser -u postgres -- "$@"); }
@@ -26,7 +26,7 @@ Nekopass 面板一键安装（Debian/Ubuntu，原生 systemd，以 root 执行�
   --package-url URL        直接下载 HTTPS 发布包
   --download-base URL      HTTPS 版本下载根地址
   --source-dir PATH        已编译的源码目录（dist/bin + web/dist）
-  --version VERSION        默认 v0.18.1
+  --version VERSION        默认 v0.18.2
   --host HOST              用户/节点能访问的域名或 IP，不含协议
   --http-port PORT         网页 HTTP 端口，默认 8080
   --grpc-port PORT         节点连接端口，默认 9443
@@ -44,13 +44,15 @@ Nekopass 面板一键安装（Debian/Ubuntu，原生 systemd，以 root 执行�
   --agent-releases URL     可选节点版本下载根地址
   --firewall MODE          auto 自动放行活动的 UFW/firewalld；skip 跳过
   --service-name NAME      默认 nekopass，测试可用 nekopass-panel-xxx
+  --reinstall              清空该服务的面板数据库并全新安装，忽略已有 control.env
   --yes                    使用参数和默认值，不询问
   --skip-dependencies      已具备依赖时跳过软件包安装
   --dry-run                只验证参数，不下载或修改机器
   -h, --help               显示帮助
 
 安装完成：nekopassctl；忘记密码：nekopassctl panel reset-password
-已有面板不会被覆盖；升级应保留配置及数据库。
+control.env 存在时不会重复安装；配置文件不存在时可重新安装，保留同名数据库与已有管理员。
+--reinstall 会删除所选数据库中的用户、余额、订单、节点和规则；--reinstall --yes 不询问确认。
 HELP
 }
 value() { [[ $# -ge 2 && -n "$2" ]] || die "参数 $1 缺少值"; }
@@ -80,6 +82,7 @@ while (($#)); do
   --firewall) value "$@"; FIREWALL=$2; shift 2;;
   --service-name) value "$@"; SERVICE=$2; shift 2;;
   --yes) YES=1; shift;;
+  --reinstall) REINSTALL=1; shift;;
   --skip-dependencies) SKIP_DEPS=1; shift;;
   --dry-run) DRY_RUN=1; shift;;
   *) die "未知参数：$1";;
@@ -98,15 +101,16 @@ port_ok "$HTTP_PORT" && port_ok "$GRPC_PORT" || die '端口须为 1–65535'
 [[ "$PG_SOURCE" == system || "$PG_SOURCE" == pgdg ]] || die '数据库来源不正确'
 [[ "$TLS_MODE" == plain || "$TLS_MODE" == existing || "$TLS_MODE" == proxy ]] || die '节点 TLS 模式不正确'
 [[ "$FIREWALL" == auto || "$FIREWALL" == skip ]] || die '防火墙模式不正确'
-if ((DRY_RUN)); then log "计划：linux/$ARCH，服务 $SERVICE，网页 $HTTP_PORT，节点 $GRPC_PORT，数据库 $PG_SOURCE/${PG_VERSION:-默认}，版本 $RELEASE_VERSION"; exit 0; fi
+if ((DRY_RUN)); then log "计划：linux/$ARCH，服务 $SERVICE，网页 $HTTP_PORT，节点 $GRPC_PORT，数据库 $PG_SOURCE/${PG_VERSION:-默认}，版本 $RELEASE_VERSION，清空重装 $REINSTALL"; exit 0; fi
 [[ $(id -u) -eq 0 ]] || die '请以 root 执行'
 [[ -d /run/systemd/system ]] && command -v systemctl >/dev/null || die '需要正在运行的 systemd'
 . /etc/os-release
 [[ "$ID" == debian || "$ID" == ubuntu ]] || die '当前安装器支持 Debian / Ubuntu'
 BASE="/opt/$SERVICE"; CONFIG="/etc/$SERVICE"; [[ "$SERVICE" != nekopass ]] || CONFIG=/etc/nekopass
 UNIT="/etc/systemd/system/$SERVICE.service"
-[[ ! -e "$CONFIG/control.env" && ! -e "$UNIT" && ! -e "$BASE/bin/nekopass" ]] || die '此服务已有安装，请使用 nekopassctl 管理或按升级方式更新，安装器不会覆盖它'
-for target in "$BASE" "$CONFIG" "$UNIT" /usr/local/bin/nekopassctl; do
+((REINSTALL)) || [[ ! -e "$CONFIG/control.env" && ! -L "$CONFIG/control.env" ]] || die '此服务已有配置，请使用 nekopassctl 管理或按升级方式更新，安装器不会覆盖它'
+STATE="/var/lib/$SERVICE"
+for target in "$BASE" "$BASE/web" "$CONFIG" "$CONFIG/control.env" "$CONFIG/tls" "$STATE" "$UNIT" /usr/local/bin/nekopassctl; do
  [[ ! -L "$target" && "$(realpath -m "$target")" == "$target" ]] || die '安装目标不能是符号链接';
 done
 prompt() {
@@ -216,13 +220,37 @@ if ! write_updater_payload > "$WORK/nekopass-update"; then
  if [[ -f "$WORK/release/bin/nekopass-update" ]]; then cp "$WORK/release/bin/nekopass-update" "$WORK/nekopass-update"
  else companion="$(dirname -- "${BASH_SOURCE[0]}")/nekopass-update.py"; [[ -f "$companion" ]] || die '缺少更新工具，请使用完整发布安装脚本'; cp "$companion" "$WORK/nekopass-update"; fi
 fi
-python3 - "$HTTP_PORT" "$GRPC_PORT" "$TLS_MODE" <<'PY'
-import socket,sys
-for address,port in [('0.0.0.0',sys.argv[1]),('127.0.0.1' if sys.argv[3]=='proxy' else '0.0.0.0',sys.argv[2])]:
- with socket.socket() as sock:
-  sock.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
-  try:sock.bind((address,int(port)))
-  except OSError:sys.exit('端口 '+port+' 已被占用，请选择其他端口')
+if [[ "$TLS_MODE" == existing ]]; then
+ [[ -f "$TLS_CERT" && -f "$TLS_KEY" ]] || die '节点连接证书或私钥不存在'
+ openssl x509 -in "$TLS_CERT" -checkend 0 -noout >/dev/null || die '证书已过期或无效'
+ openssl verify -untrusted "$TLS_CERT" "$TLS_CERT" >/dev/null || die '节点连接需要系统信任的公共 CA 证书链'
+ openssl x509 -in "$TLS_CERT" -pubkey -noout > "$WORK/cert-public"
+ openssl pkey -in "$TLS_KEY" -pubout > "$WORK/key-public" 2>/dev/null
+ cmp -s "$WORK/cert-public" "$WORK/key-public" || die '证书与私钥不匹配'
+ if python3 - "$AGENT_HOST" <<'PY'
+import ipaddress,sys
+try:ipaddress.ip_address(sys.argv[1])
+except ValueError:sys.exit(1)
+PY
+ then openssl x509 -in "$TLS_CERT" -checkip "$AGENT_HOST" -noout >/dev/null || die '证书未包含连接 IP'
+ else openssl x509 -in "$TLS_CERT" -checkhost "$AGENT_HOST" -noout >/dev/null || die '证书未包含连接域名'; fi
+ install -m 644 "$TLS_CERT" "$WORK/imported.crt"
+ install -m 600 "$TLS_KEY" "$WORK/imported.key"
+fi
+if [[ -n "$DOWNLOAD_BASE" && -z "$AGENT_RELEASES" ]]; then AGENT_RELEASES=$DOWNLOAD_BASE; fi
+if [[ -n "$DOWNLOAD_BASE" && -z "$AGENT_INSTALLER" ]]; then AGENT_INSTALLER="${DOWNLOAD_BASE%/releases}/install-agent.sh"; fi
+prompt AGENT_INSTALLER '可选节点安装脚本 HTTPS 地址（无下载源可留空）' "$AGENT_INSTALLER"
+prompt AGENT_RELEASES '可选节点版本下载根地址（无下载源可留空）' "$AGENT_RELEASES"
+python3 - "$HOST" "$HTTP_PORT" "$AGENT_HOST" "$AGENT_PORT" "$SITE" "$AGENT_INSTALLER" "$AGENT_RELEASES" "$RELEASE_VERSION" "$TLS_MODE" > "$WORK/settings.json" <<'PY'
+import json,sys
+host,http,agent,grpc,site,installer,releases,version,transport=sys.argv[1:]
+import urllib.parse
+for raw,base in [(installer,False),(releases,True)]:
+ if not raw:continue
+ u=urllib.parse.urlsplit(raw)
+ if len(raw)>2048 or u.scheme!='https' or not u.hostname or u.username or u.password or u.fragment or base and u.query or any(c in raw for c in '\r\n\0'):sys.exit('节点安装文件地址须为有效 HTTPS URL')
+authority='['+host+']' if ':' in host else host
+print(json.dumps(dict(site_name=site,panel_url='http://'+authority+':'+http,agent_host=agent,agent_port=int(grpc),agent_transport='plain' if transport=='plain' else 'tls',installer_url=installer,release_base_url=releases,agent_version='latest',install_token_minutes=30)))
 PY
 if [[ "$PG_SOURCE" == pgdg && $SKIP_DEPS == 0 ]]; then
  [[ "$VERSION_CODENAME" =~ ^[a-z]+$ ]] || die '系统发行代号不正确'
@@ -261,12 +289,44 @@ fi
 systemctl enable postgresql >/dev/null
 systemctl enable "postgresql@$PG_VERSION-$cluster" >/dev/null
 existing=$(postgres_run psql -p "$DB_PORT" -XAtqc "SELECT count(*) FROM pg_database WHERE datname='$SERVICE'")
-[[ "$existing" == 0 ]] || die '同名数据库已存在，不会覆盖；请使用其他服务名或恢复原安装'
 id "$SERVICE" >/dev/null 2>&1 || useradd --system --user-group --home-dir /nonexistent --shell /usr/sbin/nologin "$SERVICE"
 role=$(postgres_run psql -p "$DB_PORT" -XAtqc "SELECT count(*) FROM pg_roles WHERE rolname='$SERVICE'")
-[[ "$role" == 0 ]] || die '同名数据库角色已存在，安装器不会修改现有角色'
-postgres_run createuser -p "$DB_PORT" "$SERVICE"
-postgres_run createdb -p "$DB_PORT" -O "$SERVICE" "$SERVICE"
+if [[ "$existing" != 0 ]]; then
+ owner=$(postgres_run psql -p "$DB_PORT" -XAtqc "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname='$SERVICE'")
+ [[ "$owner" == "$SERVICE" ]] || die '同名数据库不属于该服务，无法继续安装；原数据库未修改'
+ if ((!REINSTALL)); then log '复用已有数据库，保留用户、订单及配置数据'; fi
+fi
+if ((REINSTALL)); then
+ log "清空重装：服务 $SERVICE，PostgreSQL $PG_VERSION / 端口 $DB_PORT，数据库 $SERVICE。所有用户、余额、订单、节点和规则将删除。"
+ if ((!YES)); then
+  answer=''
+  if [[ -t 0 ]]; then read -r -p "输入服务名 $SERVICE 确认清空：" answer || die '未确认清空'
+  else read -r -p "输入服务名 $SERVICE 确认清空：" answer </dev/tty || die '无法交互确认，请使用 --reinstall --yes'; fi
+  [[ "$answer" == "$SERVICE" ]] || die '已取消清空重装，数据库未修改'
+ fi
+ systemctl stop "$SERVICE-update.path" "$SERVICE-update.service" 2>/dev/null || true
+fi
+# Stop only the selected panel, after validating inputs and confirming reset.
+if systemctl is-active --quiet "$SERVICE"; then systemctl stop "$SERVICE"; fi
+python3 - "$HTTP_PORT" "$GRPC_PORT" "$TLS_MODE" <<'PY'
+import socket,sys
+for address,port in [('0.0.0.0',sys.argv[1]),('127.0.0.1' if sys.argv[3]=='proxy' else '0.0.0.0',sys.argv[2])]:
+ with socket.socket() as sock:
+  sock.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+  try:sock.bind((address,int(port)))
+  except OSError:sys.exit('端口 '+port+' 已被占用，请选择其他端口')
+PY
+if ((REINSTALL)); then
+ if [[ "$existing" != 0 ]]; then postgres_run dropdb -p "$DB_PORT" --force "$SERVICE"; existing=0; fi
+ # Keep the OS/PostgreSQL role and co-located Agent files. Clear panel state only.
+ for target in "$BASE/web" "$CONFIG/tls" "$STATE"; do
+  [[ ! -L "$target" && "$(realpath -m "$target")" == "$target" ]] || die '清空目标路径不正确'
+  [[ ! -e "$target" ]] || rm -rf -- "$target"
+ done
+ rm -f -- "$CONFIG/control.env"
+fi
+if [[ "$role" == 0 ]]; then postgres_run createuser -p "$DB_PORT" "$SERVICE"; fi
+if [[ "$existing" == 0 ]]; then postgres_run createdb -p "$DB_PORT" -O "$SERVICE" "$SERVICE"; fi
 install -d -m 755 "$BASE/bin" "$BASE/web" "$CONFIG"
 install -m 755 "$WORK/release/bin/nekopass" "$BASE/bin/nekopass"
 cp -r "$WORK/release/web/." "$BASE/web/"
@@ -281,22 +341,9 @@ pathlib.Path(path).write_text('NEKOPASS_DATABASE_URL='+dsn+'\nNEKOPASS_TRUSTED_P
 PY
 GRPC_BIND=0.0.0.0
 if [[ "$TLS_MODE" == existing ]]; then
- [[ -f "$TLS_CERT" && -f "$TLS_KEY" ]] || die '节点连接证书或私钥不存在'
- openssl x509 -in "$TLS_CERT" -checkend 0 -noout >/dev/null || die '证书已过期或无效'
- openssl verify -untrusted "$TLS_CERT" "$TLS_CERT" >/dev/null || die '节点连接需要系统信任的公共 CA 证书链'
- openssl x509 -in "$TLS_CERT" -pubkey -noout > "$WORK/cert-public"
- openssl pkey -in "$TLS_KEY" -pubout > "$WORK/key-public" 2>/dev/null
- cmp -s "$WORK/cert-public" "$WORK/key-public" || die '证书与私钥不匹配'
- if python3 - "$AGENT_HOST" <<'PY'
-import ipaddress,sys
-try:ipaddress.ip_address(sys.argv[1])
-except ValueError:sys.exit(1)
-PY
- then openssl x509 -in "$TLS_CERT" -checkip "$AGENT_HOST" -noout >/dev/null || die '证书未包含连接 IP'
- else openssl x509 -in "$TLS_CERT" -checkhost "$AGENT_HOST" -noout >/dev/null || die '证书未包含连接域名'; fi
  install -d -m 750 -g "$SERVICE" "$CONFIG/tls"
- install -m 644 "$TLS_CERT" "$CONFIG/tls/server.crt"
- install -m 640 -g "$SERVICE" "$TLS_KEY" "$CONFIG/tls/server.key"
+ install -m 644 "$WORK/imported.crt" "$CONFIG/tls/server.crt"
+ install -m 640 -g "$SERVICE" "$WORK/imported.key" "$CONFIG/tls/server.key"
  printf 'NEKOPASS_GRPC_TLS_CERT=%s/tls/server.crt\nNEKOPASS_GRPC_TLS_KEY=%s/tls/server.key\n' "$CONFIG" "$CONFIG" >> "$WORK/control.env"
 elif [[ "$TLS_MODE" == proxy ]]; then GRPC_BIND=127.0.0.1
 else GRPC_BIND=0.0.0.0; fi
@@ -333,19 +380,14 @@ install -m 755 "$WORK/nekopass-update" "$BASE/bin/nekopass-update"
 "$BASE/bin/nekopass-update" --service "$SERVICE" --setup-panel
 run_panel() { systemd-run --quiet --wait --pipe --collect -p "User=$SERVICE" -p "EnvironmentFile=$CONFIG/control.env" -- "$BASE/bin/nekopass" "$@"; }
 run_panel -mode migrate
-if [[ -n "$DOWNLOAD_BASE" && -z "$AGENT_RELEASES" ]]; then AGENT_RELEASES=$DOWNLOAD_BASE; fi
-if [[ -n "$DOWNLOAD_BASE" && -z "$AGENT_INSTALLER" ]]; then AGENT_INSTALLER="${DOWNLOAD_BASE%/releases}/install-agent.sh"; fi
-prompt AGENT_INSTALLER '可选节点安装脚本 HTTPS 地址（无下载源可留空）' "$AGENT_INSTALLER"
-prompt AGENT_RELEASES '可选节点版本下载根地址（无下载源可留空）' "$AGENT_RELEASES"
-python3 - "$HOST" "$HTTP_PORT" "$AGENT_HOST" "$AGENT_PORT" "$SITE" "$AGENT_INSTALLER" "$AGENT_RELEASES" "$RELEASE_VERSION" "$TLS_MODE" > "$WORK/settings.json" <<'PY'
-import json,sys
-host,http,agent,grpc,site,installer,releases,version,transport=sys.argv[1:]
-authority='['+host+']' if ':' in host else host
-print(json.dumps(dict(site_name=site,panel_url='http://'+authority+':'+http,agent_host=agent,agent_port=int(grpc),agent_transport='plain' if transport=='plain' else 'tls',installer_url=installer,release_base_url=releases,agent_version='latest',install_token_minutes=30)))
-PY
 run_panel -mode init-settings < "$WORK/settings.json"
-log '创建管理员并随机生成密码'
-run_panel -mode bootstrap -random-password -admin-name "$ADMIN" > "$WORK/admin-result"
+admins=$(postgres_run psql -p "$DB_PORT" -d "$SERVICE" -XAtqc "SELECT count(*) FROM users WHERE is_admin")
+if [[ "$admins" == 0 ]]; then
+ log '创建管理员并随机生成密码'
+ run_panel -mode bootstrap -random-password -admin-name "$ADMIN" > "$WORK/admin-result"
+else
+ printf '已有管理员账号及密码已保留；忘记密码请使用 nekopassctl 重新生成管理员密码。\n' > "$WORK/admin-result"
+fi
 systemctl daemon-reload
 systemctl enable --now "$SERVICE" >/dev/null
 ready=0
