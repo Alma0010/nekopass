@@ -75,7 +75,60 @@ func ResetAdministratorPassword(ctx context.Context, p *pgxpool.Pool, username s
 	return name, password, nil
 }
 
-func InitializeInstallationSettings(ctx context.Context, p *pgxpool.Pool, v SystemSettings) error {
+// Only installer-owned fields can be changed by init-settings. Missing fields
+// retain stored values or current defaults, including registration and ACLs.
+type InstallationSettings struct {
+	SiteName            *string `json:"site_name"`
+	PanelURL            *string `json:"panel_url"`
+	AgentHost           *string `json:"agent_host"`
+	AgentPort           *int    `json:"agent_port"`
+	AgentTransport      *string `json:"agent_transport"`
+	InstallerURL        *string `json:"installer_url"`
+	ReleaseBaseURL      *string `json:"release_base_url"`
+	AgentVersion        *string `json:"agent_version"`
+	InstallTokenMinutes *int    `json:"install_token_minutes"`
+}
+
+func InitializeInstallationSettings(ctx context.Context, p *pgxpool.Pool, input InstallationSettings) error {
+	tx, err := p.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, "SELECT id FROM site_settings WHERE id=1 FOR UPDATE"); err != nil {
+		return err
+	}
+	v, err := readSystemSettings(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if input.SiteName != nil {
+		v.SiteName = *input.SiteName
+	}
+	if input.PanelURL != nil {
+		v.PanelURL = *input.PanelURL
+	}
+	if input.AgentHost != nil {
+		v.AgentHost = *input.AgentHost
+	}
+	if input.AgentPort != nil {
+		v.AgentPort = *input.AgentPort
+	}
+	if input.AgentTransport != nil {
+		v.AgentTransport = *input.AgentTransport
+	}
+	if input.InstallerURL != nil {
+		v.InstallerURL = *input.InstallerURL
+	}
+	if input.ReleaseBaseURL != nil {
+		v.ReleaseBaseURL = *input.ReleaseBaseURL
+	}
+	if input.AgentVersion != nil {
+		v.AgentVersion = *input.AgentVersion
+	}
+	if input.InstallTokenMinutes != nil {
+		v.InstallTokenMinutes = *input.InstallTokenMinutes
+	}
 	if err := validateSettings(v); err != nil {
 		return err
 	}
@@ -83,6 +136,8 @@ func InitializeInstallationSettings(ctx context.Context, p *pgxpool.Pool, v Syst
 	if err != nil {
 		return err
 	}
-	_, err = p.Exec(ctx, "UPDATE site_settings SET config=$1 WHERE id=1", data)
-	return err
+	if _, err = tx.Exec(ctx, "UPDATE site_settings SET config=$1,updated_at=now() WHERE id=1", data); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

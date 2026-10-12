@@ -7,12 +7,13 @@ write_manager_payload() { return 1; }
 write_updater_payload() { return 1; }
 # PACKAGED_UPDATER
 DEFAULT_DOWNLOAD_BASE='https://github.com/hajidishu/nekopass/releases/download'
-RELEASE_VERSION='v0.18.0'; DOWNLOAD_BASE=$DEFAULT_DOWNLOAD_BASE; PACKAGE_URL=''; PACKAGE=''; SOURCE_DIR=''
+RELEASE_VERSION='v0.18.1'; DOWNLOAD_BASE=$DEFAULT_DOWNLOAD_BASE; PACKAGE_URL=''; PACKAGE=''; SOURCE_DIR=''
 SERVICE='nekopass'; HOST=''; AGENT_HOST=''; AGENT_PORT=''; HTTP_PORT=8080; GRPC_PORT=9443; DB_PORT=''; PG_VERSION=''
 PG_SOURCE=system; ADMIN=admin; SITE=Nekopass; TLS_MODE=plain; TLS_CERT=''; TLS_KEY=''
 AGENT_INSTALLER='https://github.com/hajidishu/nekopass/releases/latest/download/install-agent.sh'; AGENT_RELEASES='https://github.com/hajidishu/nekopass/releases/download'; FIREWALL=auto; YES=0; SKIP_DEPS=0; DRY_RUN=0; WORK=''
 die() { printf '[nekopass] %s\n' "$*" >&2; exit 1; }
 log() { printf '[nekopass] %s\n' "$*"; }
+postgres_run() { (cd / && runuser -u postgres -- "$@"); }
 usage() {
  cat <<'HELP'
 Nekopass 面板一键安装（Debian/Ubuntu，原生 systemd，以 root 执行）
@@ -25,7 +26,7 @@ Nekopass 面板一键安装（Debian/Ubuntu，原生 systemd，以 root 执行�
   --package-url URL        直接下载 HTTPS 发布包
   --download-base URL      HTTPS 版本下载根地址
   --source-dir PATH        已编译的源码目录（dist/bin + web/dist）
-  --version VERSION        默认 v0.18.0
+  --version VERSION        默认 v0.18.1
   --host HOST              用户/节点能访问的域名或 IP，不含协议
   --http-port PORT         网页 HTTP 端口，默认 8080
   --grpc-port PORT         节点连接端口，默认 9443
@@ -259,13 +260,13 @@ else
 fi
 systemctl enable postgresql >/dev/null
 systemctl enable "postgresql@$PG_VERSION-$cluster" >/dev/null
-existing=$(runuser -u postgres -- psql -p "$DB_PORT" -XAtqc "SELECT count(*) FROM pg_database WHERE datname='$SERVICE'")
+existing=$(postgres_run psql -p "$DB_PORT" -XAtqc "SELECT count(*) FROM pg_database WHERE datname='$SERVICE'")
 [[ "$existing" == 0 ]] || die '同名数据库已存在，不会覆盖；请使用其他服务名或恢复原安装'
 id "$SERVICE" >/dev/null 2>&1 || useradd --system --user-group --home-dir /nonexistent --shell /usr/sbin/nologin "$SERVICE"
-role=$(runuser -u postgres -- psql -p "$DB_PORT" -XAtqc "SELECT count(*) FROM pg_roles WHERE rolname='$SERVICE'")
+role=$(postgres_run psql -p "$DB_PORT" -XAtqc "SELECT count(*) FROM pg_roles WHERE rolname='$SERVICE'")
 [[ "$role" == 0 ]] || die '同名数据库角色已存在，安装器不会修改现有角色'
-runuser -u postgres -- createuser -p "$DB_PORT" "$SERVICE"
-runuser -u postgres -- createdb -p "$DB_PORT" -O "$SERVICE" "$SERVICE"
+postgres_run createuser -p "$DB_PORT" "$SERVICE"
+postgres_run createdb -p "$DB_PORT" -O "$SERVICE" "$SERVICE"
 install -d -m 755 "$BASE/bin" "$BASE/web" "$CONFIG"
 install -m 755 "$WORK/release/bin/nekopass" "$BASE/bin/nekopass"
 cp -r "$WORK/release/web/." "$BASE/web/"

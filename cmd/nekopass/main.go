@@ -82,7 +82,7 @@ func run() error {
 		return nil
 	}
 	if *mode == "init-settings" {
-		var settings control.SystemSettings
+		var settings control.InstallationSettings
 		decoder := json.NewDecoder(io.LimitReader(os.Stdin, 16384))
 		decoder.DisallowUnknownFields()
 		if err = decoder.Decode(&settings); err != nil {

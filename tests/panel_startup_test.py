@@ -26,6 +26,22 @@ def main():
     for name in ['NEKOPASS_TLS_CERT', 'NEKOPASS_TLS_KEY', 'NEKOPASS_GRPC_TLS_CERT', 'NEKOPASS_GRPC_TLS_KEY', 'NEKOPASS_TRUSTED_PROXIES']:
         env.pop(name, None)
     subprocess.run([str(binary), '-mode', 'migrate'], env=env, check=True, timeout=30)
+    # Exercise the same partial JSON as the installer, rather than relying on
+    # database fixtures that already contain CAPTCHA/referral/SMTP defaults.
+    settings = {
+        'site_name': 'Installer startup fixture',
+        'panel_url': 'http://127.0.0.1:18080',
+        'agent_host': '127.0.0.1', 'agent_port': 19443,
+        'agent_transport': 'plain',
+        'installer_url': 'https://example.test/install-agent.sh',
+        'release_base_url': 'https://example.test/releases',
+        'agent_version': 'latest', 'install_token_minutes': 30,
+    }
+    initialized = subprocess.run([str(binary), '-mode', 'init-settings'],
+                                 input=json.dumps(settings), text=True,
+                                 capture_output=True, env=env, timeout=30)
+    if initialized.returncode:
+        raise RuntimeError('Partial installer settings did not initialize successfully')
     with socket.socket() as listener:
         listener.bind(('127.0.0.1', 0))
         port = listener.getsockname()[1]
@@ -51,7 +67,7 @@ def main():
             if child.poll() is None:
                 child.kill()
                 child.wait(timeout=5)
-    print('PASS migrated schema accepted by actual panel; HTTP health and graceful shutdown')
+    print('PASS migration, partial installer settings, HTTP health and graceful shutdown')
 
 
 if __name__ == '__main__':

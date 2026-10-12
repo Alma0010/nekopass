@@ -7,7 +7,7 @@ on:
       version:
         description: 'Stable version tag (vX.Y.Z)'
         required: true
-        default: v0.18.0
+        default: v0.18.1
 permissions:
   contents: read
 concurrency:
@@ -64,6 +64,11 @@ jobs:
       - name: Build native Linux amd64 and arm64 packages
         shell: pwsh
         run: ./scripts/package-panel.ps1 -Version $env:RELEASE_TAG
+      - name: Test fresh native panel installation
+        run: |
+          sudo python3 tests/panel_fresh_install_e2e.py \
+            --installer dist/oss/nekopass/install-panel.sh \
+            --package "dist/oss/nekopass/releases/$RELEASE_TAG/nekopass-panel-linux-amd64.tar.gz"
       - name: Create draft, upload assets and publish
         env:
           GH_TOKEN: ${{ github.token }}
