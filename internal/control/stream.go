@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	pb "github.com/nekopass/nekopass/internal/protocol"
+	"github.com/nekopass/nekopass/internal/tlsinbound"
 	"github.com/nekopass/nekopass/internal/tunnel"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -297,14 +298,14 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 	rows, e = tx.Query(ctx, `SELECT r.id,r.user_id,nn.listen_host,r.listen_port,r.target_host,r.target_port,r.enabled,r.targets,r.balance,
  COALESCE(LEAST(NULLIF(r.speed_mbps*125000,0),NULLIF(u.rule_speed_bps,0)),0),
  COALESCE(LEAST(NULLIF(r.ip_limit,0),NULLIF(u.rule_ip_limit,0)),0),
-	 COALESCE(LEAST(NULLIF(r.connection_limit,0),NULLIF(u.rule_connection_limit,0)),0),r.proxy_accept,r.proxy_send,r.proxy_trusted_cidrs,COALESCE(r.egress_node_id,0),COALESCE(en.tunnel_public_host,''),COALESCE(en.tunnel_listen_port,0),COALESCE(l.token,''),COALESCE(en.tunnel_protocol,''),u.quota_epoch,r.protocol FROM rules r JOIN nodes nn ON nn.id=r.node_id JOIN user_entitlements u ON u.id=r.user_id JOIN user_nodes n ON n.user_id=r.user_id AND n.node_id=r.node_id LEFT JOIN nodes en ON en.id=r.egress_node_id AND en.enabled AND en.tunnel_exit_enabled LEFT JOIN node_tunnel_links l ON l.ingress_node_id=r.node_id AND l.egress_node_id=r.egress_node_id WHERE r.node_id=$1 AND nn.ingress_enabled ORDER BY r.id`, nodeID)
+	 COALESCE(LEAST(NULLIF(r.connection_limit,0),NULLIF(u.rule_connection_limit,0)),0),r.proxy_accept,r.proxy_send,r.proxy_trusted_cidrs,COALESCE(r.egress_node_id,0),COALESCE(en.tunnel_public_host,''),COALESCE(en.tunnel_listen_port,0),COALESCE(l.token,''),COALESCE(en.tunnel_protocol,''),u.quota_epoch,r.protocol,COALESCE(r.tls_inbound_id,0),r.sni_names,r.tls_alpn,r.origin_tls FROM rules r JOIN nodes nn ON nn.id=r.node_id JOIN user_entitlements u ON u.id=r.user_id JOIN user_nodes n ON n.user_id=r.user_id AND n.node_id=r.node_id LEFT JOIN nodes en ON en.id=r.egress_node_id AND en.enabled AND en.tunnel_exit_enabled LEFT JOIN node_tunnel_links l ON l.ingress_node_id=r.node_id AND l.egress_node_id=r.egress_node_id WHERE r.node_id=$1 AND nn.ingress_enabled ORDER BY r.id`, nodeID)
 	if e != nil {
 		return nil, e
 	}
 	for rows.Next() {
 		v := &pb.Rule{}
-		var targets, trusted []byte
-		if e = rows.Scan(&v.Id, &v.UserId, &v.ListenHost, &v.ListenPort, &v.TargetHost, &v.TargetPort, &v.Enabled, &targets, &v.Balance, &v.SpeedBps, &v.IpLimit, &v.ConnectionLimit, &v.ProxyAccept, &v.ProxySend, &trusted, &v.EgressNodeId, &v.TunnelHost, &v.TunnelPort, &v.TunnelToken, &v.TunnelProtocol, &v.QuotaEpoch, &v.Protocol); e != nil {
+		var targets, trusted, sni, alpn, origin []byte
+		if e = rows.Scan(&v.Id, &v.UserId, &v.ListenHost, &v.ListenPort, &v.TargetHost, &v.TargetPort, &v.Enabled, &targets, &v.Balance, &v.SpeedBps, &v.IpLimit, &v.ConnectionLimit, &v.ProxyAccept, &v.ProxySend, &trusted, &v.EgressNodeId, &v.TunnelHost, &v.TunnelPort, &v.TunnelToken, &v.TunnelProtocol, &v.QuotaEpoch, &v.Protocol, &v.TlsInboundId, &sni, &alpn, &origin); e != nil {
 			rows.Close()
 			return nil, e
 		}
@@ -315,6 +316,21 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 		if e = json.Unmarshal(trusted, &v.ProxyTrustedCidrs); e != nil {
 			rows.Close()
 			return nil, e
+		}
+		var originConfig tlsinbound.OriginTLS
+		if e = json.Unmarshal(sni, &v.SniNames); e == nil {
+			e = json.Unmarshal(alpn, &v.TlsAlpn)
+		}
+		if e == nil {
+			e = json.Unmarshal(origin, &originConfig)
+		}
+		if e != nil {
+			rows.Close()
+			return nil, e
+		}
+		v.OriginTls = &pb.OriginTLSConfig{Enabled: originConfig.Enabled, ServerName: originConfig.ServerName, RootCa: originConfig.RootCA, Alpn: originConfig.ALPN}
+		if (v.TlsInboundId != 0 || originConfig.Enabled) && r.ProtocolVersion < 20 {
+			v.Enabled = false
 		}
 		v.ProxyTrustedCidrs = settings.ProxyTrustedCIDRs
 		if v.ProxyAccept != "off" && len(settings.ProxyTrustedCIDRs) == 0 {
@@ -383,8 +399,21 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 			return nil, e
 		}
 	}
+	if e = appendTLSInboundControl(ctx, tx, nodeID, out); e != nil {
+		return nil, e
+	}
+	for _, rule := range out.Rules {
+		if out.Node.TlsInboundOnly && rule.Protocol == "tcp" && rule.TlsInboundId == 0 {
+			rule.Enabled = false
+		}
+	}
 	if e = appendTLSControl(ctx, tx, nodeID, out); e != nil {
 		return nil, e
+	}
+	if r.ProtocolVersion >= 20 {
+		if e = appendInboundChallenges(ctx, tx, nodeID, out); e != nil {
+			return nil, e
+		}
 	}
 	tlsVersions := map[int64]int{}
 	for _, rule := range out.Rules {

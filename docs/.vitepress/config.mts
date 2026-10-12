@@ -55,7 +55,8 @@ export default defineConfig({
         items: [
           { text: '安全性选择', link: '/security/' },
           { text: '不加密', link: '/security/none' },
-          { text: 'TLS', link: '/security/tls' }
+          { text: 'TLS', link: '/security/tls' },
+          { text: 'TLS 入站 / SNI 分流', link: '/security/tls-inbound' }
         ]
       },
       {

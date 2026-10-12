@@ -4,6 +4,8 @@ raw(tcp)、h2 和 raw(udp) 均可选择 TLS。配置属于出口，连接它的�
 
 原生 UDP 传输使用 DTLS。
 
+客户端到入口的共享端口及 SNI 分流配置见 [TLS 入站](./tls-inbound.md)。
+
 ## 配置项
 
 | 配置项 | 用途 |

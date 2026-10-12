@@ -249,7 +249,7 @@ func (s *Server) saveNodePart(w http.ResponseWriter, r *http.Request, part strin
 		e = tx.QueryRow(ctx, "INSERT INTO nodes(name,token_hash,token) VALUES($1,$2,$3) RETURNING id", v.Name, tokenHash, token).Scan(&id)
 	} else {
 		var conflict bool
-		e = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM rules WHERE node_id=$1 AND listen_port NOT BETWEEN $2 AND $3)", id, v.PortMin, v.PortMax).Scan(&conflict)
+		e = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM rules WHERE node_id=$1 AND tls_inbound_id IS NULL AND listen_port NOT BETWEEN $2 AND $3)", id, v.PortMin, v.PortMax).Scan(&conflict)
 		if e == nil && conflict {
 			fail(w, 409, "已有规则端口超出新范围，请先修改这些规则")
 			return

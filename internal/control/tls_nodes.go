@@ -118,7 +118,7 @@ func appendTLSControl(ctx context.Context, tx pgx.Tx, nodeID int64, out *pb.Cont
 		out.Node.Tls.ServerName = ""
 		out.Node.Tls.Challenges = nil
 	}
-	rows, err := tx.Query(ctx, "SELECT domain,token,key_authorization,revision,extract(epoch FROM expires_at)::bigint FROM node_acme_challenges WHERE node_id=$1 AND expires_at>now()", nodeID)
+	rows, err := tx.Query(ctx, "SELECT domain,token,key_authorization,revision,extract(epoch FROM expires_at)::bigint FROM node_acme_challenges WHERE node_id=$1 AND inbound_id IS NULL AND expires_at>now()", nodeID)
 	if err != nil {
 		return err
 	}

@@ -28,6 +28,8 @@ import (
 	"github.com/go-acme/lego/v4/providers/dns/dnspod"
 	"github.com/go-acme/lego/v4/registration"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/nekopass/nekopass/internal/tlsinbound"
 )
 
 // Provider errors may contain URLs or credentials. Report only our own sanitized
@@ -95,6 +97,7 @@ func (s *Server) RunCertificateClock(ctx context.Context) {
 				}
 			}
 		}
+		s.runInboundCertificateJobs(ctx, next, delays, seenGen)
 		select {
 		case <-ctx.Done():
 			return
@@ -104,16 +107,23 @@ func (s *Server) RunCertificateClock(ctx context.Context) {
 }
 
 func (s *Server) issueNodeCertificate(ctx context.Context, node, generation int64, cfg TunnelTLSConfig) error {
+	return s.issueCertificate(ctx, node, 0, generation, cfg)
+}
+func (s *Server) issueCertificate(ctx context.Context, node, inbound, generation int64, cfg TunnelTLSConfig) error {
 	conn, err := pgx.ConnectConfig(ctx, s.Pool.Config().ConnConfig.Copy())
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
+	lockID := int64(2100000000) + node
+	if inbound != 0 {
+		lockID = int64(3100000000) + inbound
+	}
 	var locked bool
-	if err = conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", int64(2100000000)+node).Scan(&locked); err != nil || !locked {
+	if err = conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", lockID).Scan(&locked); err != nil || !locked {
 		return errors.New("certificate job already active")
 	}
-	user, err := s.acmeAccount(ctx, node, cfg)
+	user, err := s.acmeResourceAccount(ctx, node, inbound, cfg)
 	if err != nil {
 		return err
 	}
@@ -138,7 +148,7 @@ func (s *Server) issueNodeCertificate(ctx context.Context, node, generation int6
 	client.Challenge.Remove(challenge.TLSALPN01)
 	if cfg.CertificateMode == "acme_http" {
 		client.Challenge.Remove(challenge.DNS01)
-		if err = client.Challenge.SetHTTP01Provider(&nodeHTTPChallenge{server: s, node: node, generation: generation, ctx: ctx}); err != nil {
+		if err = client.Challenge.SetHTTP01Provider(&nodeHTTPChallenge{server: s, node: node, inbound: inbound, generation: generation, ctx: ctx}); err != nil {
 			return err
 		}
 	} else {
@@ -157,7 +167,8 @@ func (s *Server) issueNodeCertificate(ctx context.Context, node, generation int6
 			return err
 		}
 		data, _ := json.Marshal(user.registration)
-		if _, err = s.Pool.Exec(ctx, "UPDATE node_acme_accounts SET registration=$2 WHERE node_id=$1", node, data); err != nil {
+		table, idColumn, owner := acmeOwner(node, inbound)
+		if _, err = s.Pool.Exec(ctx, "UPDATE "+table+" SET registration=$2 WHERE "+idColumn+"=$1", owner, data); err != nil {
 			return err
 		}
 	}
@@ -174,21 +185,41 @@ func (s *Server) issueNodeCertificate(ctx context.Context, node, generation int6
 		return err
 	}
 	defer tx.Rollback(ctx)
-	tag, err := tx.Exec(ctx, "UPDATE nodes SET tls_certificate=$3,tls_private_key=$4,tls_ca=$6,tls_status='ready',tls_error='',tls_not_after=$5,config_revision=(SELECT value+1 FROM revision WHERE id=1) WHERE id=$1 AND tls_generation=$2", node, generation, string(resource.Certificate), string(resource.PrivateKey), until, cfg.RootCA)
+	var tag pgconn.CommandTag
+	if inbound != 0 {
+		tag, err = tx.Exec(ctx, "UPDATE node_tls_inbounds SET certificate=$3,private_key=$4,certificate_status='ready',certificate_error='',not_after=$5 WHERE id=$1 AND generation=$2", inbound, generation, string(resource.Certificate), string(resource.PrivateKey), until)
+	} else {
+		tag, err = tx.Exec(ctx, "UPDATE nodes SET tls_certificate=$3,tls_private_key=$4,tls_ca=$6,tls_status='ready',tls_error='',tls_not_after=$5,config_revision=(SELECT value+1 FROM revision WHERE id=1) WHERE id=$1 AND tls_generation=$2", node, generation, string(resource.Certificate), string(resource.PrivateKey), until, cfg.RootCA)
+	}
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return errors.New("certificate configuration changed")
 	}
+	if inbound != 0 {
+		if err = touchTLSInboundNode(ctx, tx, node); err != nil {
+			return err
+		}
+	}
 	return finishRules(ctx, tx)
 }
 
 func (s *Server) acmeAccount(ctx context.Context, node int64, cfg TunnelTLSConfig) (*acmeUser, error) {
+	return s.acmeResourceAccount(ctx, node, 0, cfg)
+}
+func acmeOwner(node, inbound int64) (string, string, int64) {
+	if inbound != 0 {
+		return "inbound_acme_accounts", "inbound_id", inbound
+	}
+	return "node_acme_accounts", "node_id", node
+}
+func (s *Server) acmeResourceAccount(ctx context.Context, node, inbound int64, cfg TunnelTLSConfig) (*acmeUser, error) {
+	table, idColumn, owner := acmeOwner(node, inbound)
 	u := &acmeUser{email: cfg.ACMEEmail}
 	var directory, email, key string
 	var data []byte
-	err := s.Pool.QueryRow(ctx, "SELECT directory_url,email,private_key,registration FROM node_acme_accounts WHERE node_id=$1", node).Scan(&directory, &email, &key, &data)
+	err := s.Pool.QueryRow(ctx, "SELECT directory_url,email,private_key,registration FROM "+table+" WHERE "+idColumn+"=$1", owner).Scan(&directory, &email, &key, &data)
 	if err == nil && directory == cfg.ACMEDirectory && email == cfg.ACMEEmail {
 		block, _ := pem.Decode([]byte(key))
 		if block == nil {
@@ -217,7 +248,7 @@ func (s *Server) acmeAccount(ctx context.Context, node int64, cfg TunnelTLSConfi
 		return nil, err
 	}
 	key = string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: encoded}))
-	_, err = s.Pool.Exec(ctx, "INSERT INTO node_acme_accounts(node_id,directory_url,email,private_key) VALUES($1,$2,$3,$4) ON CONFLICT(node_id) DO UPDATE SET directory_url=$2,email=$3,private_key=$4,registration='{}'", node, cfg.ACMEDirectory, cfg.ACMEEmail, key)
+	_, err = s.Pool.Exec(ctx, "INSERT INTO "+table+"("+idColumn+",directory_url,email,private_key) VALUES($1,$2,$3,$4) ON CONFLICT("+idColumn+") DO UPDATE SET directory_url=$2,email=$3,private_key=$4,registration='{}'", owner, cfg.ACMEDirectory, cfg.ACMEEmail, key)
 	return u, err
 }
 
@@ -247,6 +278,7 @@ func dnsChallengeProvider(cfg TunnelTLSConfig) (challenge.Provider, error) {
 type nodeHTTPChallenge struct {
 	server           *Server
 	node, generation int64
+	inbound          int64
 	ctx              context.Context
 }
 
@@ -259,7 +291,12 @@ func (p *nodeHTTPChallenge) Present(domain, token, keyAuthorization string) erro
 	defer tx.Rollback(ctx)
 	var current int64
 	var configured string
-	if err = tx.QueryRow(ctx, "SELECT tls_generation,tls_config->>'server_name' FROM nodes WHERE id=$1", p.node).Scan(&current, &configured); err != nil {
+	if p.inbound != 0 {
+		err = tx.QueryRow(ctx, "SELECT generation,config#>>'{tls,server_name}' FROM node_tls_inbounds WHERE id=$1 AND node_id=$2", p.inbound, p.node).Scan(&current, &configured)
+	} else {
+		err = tx.QueryRow(ctx, "SELECT tls_generation,tls_config->>'server_name' FROM nodes WHERE id=$1", p.node).Scan(&current, &configured)
+	}
+	if err != nil {
 		return err
 	}
 	if current != p.generation || domain != configured {
@@ -269,7 +306,7 @@ func (p *nodeHTTPChallenge) Present(domain, token, keyAuthorization string) erro
 	if err = tx.QueryRow(ctx, "SELECT value+1 FROM revision WHERE id=1").Scan(&revision); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, "INSERT INTO node_acme_challenges(node_id,domain,token,key_authorization,expires_at,revision) VALUES($1,$2,$3,$4,now()+interval '10 minutes',$5) ON CONFLICT(node_id,token) DO UPDATE SET key_authorization=$4,expires_at=now()+interval '10 minutes',revision=$5", p.node, domain, token, keyAuthorization, revision)
+	_, err = tx.Exec(ctx, "INSERT INTO node_acme_challenges(node_id,domain,token,key_authorization,expires_at,revision,inbound_id) VALUES($1,$2,$3,$4,now()+interval '10 minutes',$5,NULLIF($6,0)) ON CONFLICT(node_id,token) DO UPDATE SET key_authorization=$4,expires_at=now()+interval '10 minutes',revision=$5,inbound_id=NULLIF($6,0)", p.node, domain, token, keyAuthorization, revision, p.inbound)
 	if err != nil {
 		return err
 	}
@@ -295,6 +332,56 @@ func (p *nodeHTTPChallenge) Present(domain, token, keyAuthorization string) erro
 	}
 }
 func (p *nodeHTTPChallenge) CleanUp(domain, token, keyAuthorization string) error {
-	_, err := p.server.Pool.Exec(p.ctx, "DELETE FROM node_acme_challenges WHERE node_id=$1 AND domain=$2 AND token=$3 AND key_authorization=$4", p.node, domain, token, keyAuthorization)
+	_, err := p.server.Pool.Exec(p.ctx, "DELETE FROM node_acme_challenges WHERE node_id=$1 AND domain=$2 AND token=$3 AND key_authorization=$4 AND COALESCE(inbound_id,0)=$5", p.node, domain, token, keyAuthorization, p.inbound)
 	return err
+}
+
+func (s *Server) runInboundCertificateJobs(ctx context.Context, next map[int64]time.Time, delays map[int64]time.Duration, seen map[int64]int64) {
+	rows, err := s.Pool.Query(ctx, `SELECT t.id,t.node_id,t.generation,t.config FROM node_tls_inbounds t JOIN nodes n ON n.id=t.node_id WHERE n.enabled AND n.ingress_enabled AND n.protocol_version>=20 AND t.config->>'enabled'='true' AND t.config#>>'{tls,certificate_mode}' IN ('acme_http','acme_dns') AND (t.certificate_status IN ('pending','error') OR t.not_after<now()+interval '30 days') ORDER BY t.id LIMIT 100`)
+	if err != nil {
+		return
+	}
+	type job struct {
+		id, node, generation int64
+		raw                  []byte
+	}
+	var jobs []job
+	for rows.Next() {
+		var j job
+		if rows.Scan(&j.id, &j.node, &j.generation, &j.raw) == nil {
+			jobs = append(jobs, j)
+		}
+	}
+	rows.Close()
+	for _, j := range jobs {
+		if ctx.Err() != nil {
+			return
+		}
+		key := -j.id
+		if seen[key] == j.generation && time.Now().Before(next[key]) {
+			continue
+		}
+		seen[key] = j.generation
+		cfg := tlsinbound.DefaultConfig()
+		if json.Unmarshal(j.raw, &cfg) != nil || cfg.Normalize() != nil {
+			continue
+		}
+		v := cfg.TLS
+		options := TunnelTLSConfig{ServerName: v.ServerName, CertificateMode: v.CertificateMode, ACMEEmail: v.ACMEEmail, ACMEDirectory: v.ACMEDirectory, ACMERootCA: v.ACMERootCA, HTTPChallengePort: v.HTTPChallengePort, DNSProvider: v.DNSProvider, DNSCredentials: v.DNSCredentials}
+		if err = s.issueCertificate(ctx, j.node, j.id, j.generation, options); err != nil {
+			delay := delays[key]
+			if delay == 0 {
+				delay = time.Minute
+			} else {
+				delay = min(delay*2, 30*time.Minute)
+			}
+			delays[key] = delay
+			next[key] = time.Now().Add(delay)
+			_, _ = s.Pool.Exec(ctx, "UPDATE node_tls_inbounds SET certificate_status='error',certificate_error='自动申请失败，请检查域名、验证端口或 DNS 凭据' WHERE id=$1 AND generation=$2", j.id, j.generation)
+			slog.Warn("inbound certificate issuance failed", "inbound_id", j.id, "error_type", fmt.Sprintf("%T", err))
+		} else {
+			delete(next, key)
+			delete(delays, key)
+		}
+	}
 }

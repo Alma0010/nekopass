@@ -92,3 +92,13 @@ test('batch limit and UTF-8 size limit apply to pasted text as well as files', (
   assert.throws(() => convert(Array.from({ length: 501 }, () => JSON.stringify(example)).join('\n')), /1–500/)
   assert.throws(() => parseRuleImport('字'.repeat(350000)), /1 MiB/)
 })
+test('TLS inbound and origin settings require full backup and survive native import', () => {
+  const rule = {user_id:1,node_id:2,egress_node_id:0,name:'TLS rule',group_id:0,listen_port:443,targets:['origin.example.com:443'],balance:'random',speed_mbps:0,ip_limit:0,connection_limit:0,proxy_accept:'off',proxy_send:'off',proxy_trusted_cidrs:[],enabled:true,protocol:'tcp',tls_inbound_id:9,sni_names:['app.example.com'],tls_alpn:['http/1.1'],origin_tls:{enabled:true,server_name:'origin.example.com',root_ca:'',alpn:['http/1.1']}}
+  assert.throws(() => encodeNyanpassRules([rule]), /完整备份/)
+  const parsed = parseRuleImport(JSON.stringify({rules:[rule]}))
+  const imported = prepareRuleImport(parsed,{userID:10,nodeID:2,egressNodeID:0,groupID:0,trustedCIDRs:[],randomPorts:false})[0]
+  assert.equal(imported.user_id,10)
+  assert.equal(imported.tls_inbound_id,9)
+  assert.deepEqual(imported.sni_names,['app.example.com'])
+  assert.deepEqual(imported.origin_tls,rule.origin_tls)
+})

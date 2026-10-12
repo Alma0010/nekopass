@@ -102,6 +102,10 @@ func (r *ruleRuntime) selectTarget(excluded map[int]bool) int {
 }
 func (r *ruleRuntime) releaseTarget(i int) { r.mu.Lock(); r.targetActive[i]--; r.mu.Unlock() }
 func (r *ruleRuntime) dial(ctx context.Context) (net.Conn, func(), error) {
+	c, release, _, err := r.dialRoute(ctx)
+	return c, release, err
+}
+func (r *ruleRuntime) dialRoute(ctx context.Context) (net.Conn, func(), string, error) {
 	tried := map[int]bool{}
 	var last error
 	timeout := r.dialTimeout
@@ -125,7 +129,8 @@ func (r *ruleRuntime) dial(ctx context.Context) (net.Conn, func(), error) {
 		} else {
 			if tunnel.H2(r.policy.TunnelProtocol) {
 				if r.h2 == nil {
-					return nil, nil, errors.New("TLS transport unavailable")
+					r.releaseTarget(i)
+					return nil, nil, "", errors.New("TLS transport unavailable")
 				}
 				c, e = r.h2.Dial(dialCtx, ctx, r.policy, r.targets[i])
 			} else {
@@ -133,7 +138,7 @@ func (r *ruleRuntime) dial(ctx context.Context) (net.Conn, func(), error) {
 			}
 		}
 		if e == nil {
-			return c, func() { r.releaseTarget(i) }, nil
+			return c, func() { r.releaseTarget(i) }, r.targets[i], nil
 		}
 		r.releaseTarget(i)
 		last = e
@@ -144,7 +149,7 @@ func (r *ruleRuntime) dial(ctx context.Context) (net.Conn, func(), error) {
 	if last == nil {
 		last = errors.New("no targets")
 	}
-	return nil, nil, last
+	return nil, nil, "", last
 }
 
 func (r *ruleRuntime) configureNode(c *pb.NodeConfig) {

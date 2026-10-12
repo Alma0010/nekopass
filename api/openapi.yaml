@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.17.6
+  version: 0.18.0
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Administrator-created accounts or optional email-verified registration. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -9,6 +9,76 @@ security:
   - session: []
   - httpSession: []
 paths:
+  /tls-inbounds:
+    get:
+      summary: Shared TLS listener choices authorized for the current user
+      description: Includes ID, node, port, name, SNI allowlist and certificate status; never exposes keys or DNS credentials.
+      responses:
+        '200': {description: Authorized enabled shared listener choices}
+  /admin/nodes/{id}/tls-inbounds:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+    get:
+      summary: Administrator-only shared TLS listener configuration and certificate status
+      responses:
+        '200': {description: 'node_id, node_name, tls_only, protocol_version, inbounds, default_rules; public certificate included for copying'}
+        '403': {$ref: '#/components/responses/Error'}
+    put:
+      summary: Create or edit a node shared TLS listener and distribute configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [config]
+              properties:
+                id: {type: integer, format: int64, minimum: 0, default: 0, description: '0 creates a listener'}
+                config: {$ref: '#/components/schemas/SharedTLSConfig'}
+      responses:
+        '200': {description: Listener ID}
+        '400': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {description: Port occupied or changed settings exclude existing SNI registrations}
+    delete:
+      summary: Delete an unused shared TLS listener
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id: {type: integer, format: int64, minimum: 1}
+      responses:
+        '200': {description: Listener and reserved port removed}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {description: Rules still reference this listener}
+  /admin/nodes/{id}/tls-policy:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+    put:
+      summary: Administrator-only requirement for TCP rules to use shared TLS inbound
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tls_only: {type: boolean, default: false}
+      responses:
+        '200': {description: Policy saved; ordinary TCP forwarding stops when enabled, UDP is unchanged}
+        '403': {$ref: '#/components/responses/Error'}
+  /admin/users/{userID}/tls-inbounds:
+    parameters:
+      - {name: userID, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+    get:
+      summary: Administrator-only shared TLS listener choices scoped to the managed user
+      responses:
+        '200': {description: Same safe fields as the ordinary user choices endpoint}
+        '403': {$ref: '#/components/responses/Error'}
   /admin/nodes/{id}/ip-recovery:
     parameters:
       - {name: id, in: path, required: true, schema: {type: integer, minimum: 1}}
@@ -1357,6 +1427,41 @@ components:
         node_group_ids: {type: array, maxItems: 1000, uniqueItems: true, items: {type: integer, format: int64, minimum: 1}, description: 'Personal allowed groups; empty grants no nodes; omission preserves groups'}
         expires_at: {type: string, description: 'RFC3339 date; empty means permanent; omission preserves expiry'}
         expected_resources_revision: {type: integer, minimum: 0, description: 'Stale admin edits return HTTP 409'}
+    OriginTLS:
+      type: object
+      properties:
+        enabled: {type: boolean, default: false}
+        server_name: {type: string, description: 'Origin SNI; blank uses the selected target host, with normal certificate verification'}
+        root_ca: {type: string, description: 'Optional public PEM CA; blank uses system trust'}
+        alpn: {type: array, maxItems: 8, items: {type: string}, description: 'Blank inherits negotiated inbound ALPN'}
+    SharedTLSConfig:
+      type: object
+      required: [name, port, tls]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 64}
+        port: {type: integer, minimum: 1, maximum: 65535, default: 443}
+        enabled: {type: boolean, default: true}
+        proxy_accept: {type: string, enum: ['off', auto], default: 'off', description: 'auto requires a trusted PROXY header before TLS; administered for the shared listener'}
+        allowed_sni: {type: array, maxItems: 128, items: {type: string}, description: 'Domain suffix allowlist; empty permits certificate-covered names'}
+        reject_empty_sni: {type: boolean, default: true}
+        unknown_sni_action: {type: string, enum: [reject, default_rule], default: reject}
+        default_rule_id: {type: integer, format: int64, minimum: 0, description: 'An administrator-owned child of this listener; used only for default_rule'}
+        max_handshakes: {type: integer, minimum: 1, maximum: 4096, default: 128, description: 'Unfinished handshakes per listener; each TCP peer additionally limited to 16'}
+        handshake_timeout_seconds: {type: integer, minimum: 1, maximum: 30, default: 5}
+        min_tls_version: {type: string, enum: ['1.2', '1.3'], default: '1.2'}
+        tls:
+          type: object
+          properties:
+            server_name: {type: string, description: 'Certificate domain; wildcard certificates may use DNS validation'}
+            certificate_mode: {type: string, enum: [self_signed, import, acme_dns, acme_http], default: self_signed}
+            certificate: {type: string, description: 'Imported PEM certificate chain'}
+            private_key: {type: string, description: 'Imported PEM private key; administrator-only'}
+            acme_email: {type: string}
+            acme_directory: {type: string, default: 'https://acme-v02.api.letsencrypt.org/directory'}
+            acme_root_ca: {type: string, description: 'Optional private ACME public trust root'}
+            http_challenge_port: {type: integer, minimum: 1, maximum: 65535, default: 80}
+            dns_provider: {type: string, enum: [cloudflare, alidns, dnspod]}
+            dns_credentials: {type: object, additionalProperties: {type: string}, description: 'Administrator-only provider credentials; retained on controller'}
     RuleInput:
       type: object
       required: [node_id, enabled]
@@ -1364,10 +1469,14 @@ components:
         protocol: {type: string, enum: [tcp, udp], default: tcp, description: 'Business protocol; UDP requires Agent protocol 16, raw_udp exits require udp only. Proxy Protocol is TCP-only.'}
         user_id: {type: integer, format: int64, description: Ignored; owner is session or admin-managed user}
         node_id: {type: integer, format: int64}
+        tls_inbound_id: {type: integer, format: int64, minimum: 0, default: 0, description: 'Shared TLS listener; requires TCP and Agent protocol 20. Zero uses an ordinary rule port.'}
+        sni_names: {type: array, maxItems: 32, items: {type: string}, description: 'Exact SNI domains; 1-32 required for shared TLS; names remain reserved when paused'}
+        tls_alpn: {type: array, maxItems: 8, items: {type: string}, description: 'Application ALPN for the shared child; empty offers no ALPN'}
+        origin_tls: {$ref: '#/components/schemas/OriginTLS'}
         egress_node_id: {type: integer, format: int64, minimum: 0, default: 0, description: '0 means direct; other IDs must be linked to the ingress and allowed by the user plan'}
         name: {type: string, maxLength: 128, description: Defaults to first target if blank}
         group_id: {type: integer, format: int64, description: 0 means ungrouped; must belong to owner}
-        listen_port: {type: integer, minimum: 0, maximum: 65535, description: '0 or omitted allocates randomly within the centrally configured node port range'}
+        listen_port: {type: integer, minimum: 0, maximum: 65535, description: '0 or omitted allocates randomly for ordinary rules. Shared TLS ignores this field and uses its listener port.'}
         targets: {type: array, minItems: 1, maxItems: 32, items: {type: string}, description: 'host:port or [IPv6]:port; required unless legacy target_host/target_port supplied'}
         balance: {type: string, enum: [random, round_robin, least_connections], default: random}
         speed_mbps: {type: integer, enum: [0], default: 0, deprecated: true, description: Configure rule speed in plan instead}

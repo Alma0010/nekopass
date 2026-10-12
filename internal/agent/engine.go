@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -38,6 +39,7 @@ type Engine struct {
 	users            map[int64]*Account
 	retired          map[string]*Account
 	listeners        map[int64]*listener
+	tlsInbounds      map[int64]*tlsInboundListener
 	udpListeners     map[int64]*udpListener
 	udpQueued        atomic.Int64
 	udpNonceMu       sync.Mutex
@@ -58,7 +60,7 @@ type Engine struct {
 	h2               *h2Transport
 	h2Certificate    atomic.Pointer[tls.Certificate]
 	acmeAck          atomic.Int64
-	challengeServer  *http.Server
+	challengeServers map[int32]*http.Server
 	ipRecoveryConfig *pb.IPRecoveryConfig
 	ipRecoveryCancel context.CancelFunc
 	ipRecoveryStatus atomic.Pointer[pb.IPRecoveryStatus]
@@ -216,7 +218,7 @@ func (e *Engine) Apply(c *pb.ControlMessage) error {
 	}
 	wanted := map[int64]*pb.Rule{}
 	for _, r := range c.Rules {
-		if networkIncludes(r.Protocol, "tcp") && (c.Node == nil && e.maxConnections.Load() > 0 || c.Node != nil && c.Node.Enabled) && r.Enabled && e.users[r.UserId] != nil && e.users[r.UserId].valid() {
+		if r.TlsInboundId == 0 && (c.Node == nil || !c.Node.TlsInboundOnly) && networkIncludes(r.Protocol, "tcp") && (c.Node == nil && e.maxConnections.Load() > 0 || c.Node != nil && c.Node.Enabled) && r.Enabled && e.users[r.UserId] != nil && e.users[r.UserId].valid() {
 			wanted[r.Id] = r
 		}
 	}
@@ -261,6 +263,7 @@ func (e *Engine) Apply(c *pb.ControlMessage) error {
 		e.wg.Add(1)
 		go e.accept(l, a, count)
 	}
+	errs = append(errs, e.configureTLSInbounds(c, restartListeners)...)
 	errs = append(errs, e.configureUDP(c)...)
 	e.syncError = strings.Join(errs, "; ")
 	if len(errs) == 0 {
@@ -303,10 +306,6 @@ func (e *Engine) accept(l *listener, a *Account, count *atomic.Int64) {
 	}
 }
 func (e *Engine) forward(l *listener, client net.Conn, a *Account, count *atomic.Int64) {
-	activity := &atomic.Int64{}
-	activity.Store(time.Now().UnixNano())
-	ctx, cancel := context.WithCancel(context.WithValue(l.ctx, activityKey{}, activity))
-	defer cancel()
 	defer client.Close()
 	trusted := l.rule.ProxyTrustedCidrs
 	if node := e.node.Load(); node != nil && node.SecurityConfigured {
@@ -316,7 +315,14 @@ func (e *Engine) forward(l *listener, client net.Conn, a *Account, count *atomic
 	if err != nil {
 		return
 	}
-	client = effective
+	e.forwardPrepared(l, effective, addresses, a, count)
+}
+func (e *Engine) forwardPrepared(l *listener, client net.Conn, addresses proxyAddresses, a *Account, count *atomic.Int64) {
+	activity := &atomic.Int64{}
+	activity.Store(time.Now().UnixNano())
+	ctx, cancel := context.WithCancel(context.WithValue(l.ctx, activityKey{}, activity))
+	defer cancel()
+	defer client.Close()
 	ip := addresses.src.Addr().Unmap().String()
 	if !a.addIP(ip) {
 		return
@@ -326,7 +332,7 @@ func (e *Engine) forward(l *listener, client net.Conn, a *Account, count *atomic
 		return
 	}
 	defer l.runtime.removeIP(ip)
-	target, release, err := l.runtime.dial(ctx)
+	target, release, address, err := l.runtime.dialRoute(ctx)
 	if err != nil {
 		return
 	}
@@ -334,6 +340,46 @@ func (e *Engine) forward(l *listener, client net.Conn, a *Account, count *atomic
 	if err = writeProxy(target, l.rule.ProxySend, addresses); err != nil {
 		target.Close()
 		return
+	}
+	if origin := l.rule.OriginTls; origin != nil && origin.Enabled {
+		serverName := origin.ServerName
+		if serverName == "" {
+			serverName, _, _ = net.SplitHostPort(address)
+		}
+		tlsCfg := &tls.Config{ServerName: serverName, MinVersion: tls.VersionTLS12, NextProtos: origin.Alpn}
+		if len(origin.Alpn) == 0 {
+			if secured, ok := client.(*tls.Conn); ok && secured.ConnectionState().NegotiatedProtocol != "" {
+				tlsCfg.NextProtos = []string{secured.ConnectionState().NegotiatedProtocol}
+			}
+		}
+		if origin.RootCa != "" {
+			roots, e := x509.SystemCertPool()
+			if e != nil {
+				roots = x509.NewCertPool()
+			}
+			if !roots.AppendCertsFromPEM([]byte(origin.RootCa)) {
+				target.Close()
+				return
+			}
+			tlsCfg.RootCAs = roots
+		}
+		secured := tls.Client(target, tlsCfg)
+		timeout := l.runtime.dialTimeout
+		if timeout <= 0 {
+			timeout = 8 * time.Second
+		}
+		handshakeCtx, done := context.WithTimeout(ctx, timeout)
+		err = secured.HandshakeContext(handshakeCtx)
+		done()
+		if err != nil {
+			target.Close()
+			return
+		}
+		if inbound, ok := client.(*tls.Conn); ok && inbound.ConnectionState().NegotiatedProtocol != "" && secured.ConnectionState().NegotiatedProtocol != inbound.ConnectionState().NegotiatedProtocol {
+			secured.Close()
+			return
+		}
+		target = secured
 	}
 	defer target.Close()
 	activity.Store(time.Now().UnixNano())
@@ -440,7 +486,7 @@ func (e *Engine) Report() (*pb.AgentMessage, error) {
 		a.mu.Lock()
 		defer a.mu.Unlock()
 	}
-	r := &pb.AgentMessage{ProtocolVersion: 19, AgentVersion: release.Version, UpdateSupported: e.updateDirectory != "", UpdateStatus: e.readUpdateStatus(), AcmeAck: e.acmeAck.Load(), Probe: e.probe.Load(), InstanceId: e.state.Instance, AppliedRevision: e.revision, Error: e.syncError, ActiveConnections: e.connections.Load(), DdnsStatus: e.ddnsStatus.Load(), PublicIp: e.publicIP.Load(), IpRecoveryStatus: e.ipRecoveryStatus.Load()}
+	r := &pb.AgentMessage{ProtocolVersion: 20, AgentVersion: release.Version, UpdateSupported: e.updateDirectory != "", UpdateStatus: e.readUpdateStatus(), AcmeAck: e.acmeAck.Load(), Probe: e.probe.Load(), InstanceId: e.state.Instance, AppliedRevision: e.revision, Error: e.syncError, ActiveConnections: e.connections.Load(), DdnsStatus: e.ddnsStatus.Load(), PublicIp: e.publicIP.Load(), IpRecoveryStatus: e.ipRecoveryStatus.Load()}
 	pending, err := e.state.RestorePending()
 	if err != nil {
 		return nil, err
@@ -516,14 +562,21 @@ func (e *Engine) Close() {
 		l.cancel()
 		l.ln.Close()
 	}
+	for _, l := range e.tlsInbounds {
+		l.cancel()
+		l.ln.Close()
+		for _, route := range l.snapshot.Load().routes {
+			route.l.cancel()
+		}
+	}
 	for _, l := range e.udpListeners {
 		l.cancel()
 		l.conn.Close()
 	}
 	e.mu.Unlock()
 	e.h2.Close()
-	if e.challengeServer != nil {
-		e.challengeServer.Close()
+	for _, server := range e.challengeServers {
+		server.Close()
 	}
 	e.wg.Wait()
 	if _, err := e.Report(); err != nil {

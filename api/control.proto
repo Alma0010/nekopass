@@ -74,7 +74,21 @@ message Rule {
   TLSClientConfig tls = 22;
   int64 quota_epoch = 23;
   string protocol = 24;
+  int64 tls_inbound_id = 25;
+  repeated string sni_names = 26;
+  repeated string tls_alpn = 27;
+  OriginTLSConfig origin_tls = 28;
 }
+message OriginTLSConfig { bool enabled = 1; string server_name = 2; string root_ca = 3; repeated string alpn = 4; }
+message SharedTLSInbound {
+ int64 id = 1; int32 port = 2; bool enabled = 3;
+ string certificate = 4; string private_key = 5;
+ repeated string allowed_sni = 6; bool reject_empty_sni = 7;
+ int64 default_rule_id = 8; string proxy_accept = 9;
+ int32 max_handshakes = 10; int32 handshake_timeout_seconds = 11;
+ string min_tls_version = 12;
+}
+message ACMEHTTPEndpoint { int32 port = 1; repeated ACMEChallenge challenges = 2; }
 message TunnelLink {
   int64 ingress_node_id = 1;
   string token = 2;
@@ -143,6 +157,9 @@ message NodeConfig {
  int32 udp_idle_timeout_seconds = 21;
  bool report_public_ip = 22;
  IPRecoveryConfig ip_recovery = 23;
+ repeated SharedTLSInbound tls_inbounds = 24;
+ bool tls_inbound_only = 25;
+ repeated ACMEHTTPEndpoint acme_http = 26;
 }
 
 message IPRecoveryConfig {

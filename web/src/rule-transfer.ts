@@ -75,6 +75,7 @@ export function prepareRuleImport(data: RuleImport, destination: ImportDestinati
 
 export function encodeNyanpassRules(rules: RuleInput[]): string {
   return rules.map(r => {
+ if(r.tls_inbound_id||r.origin_tls?.enabled)throw new Error(`规则「${r.name}」请使用 Nekopass 完整备份保留 TLS 入站与回源设置`)
  if(r.protocol&&r.protocol!=='tcp')throw new Error(`规则「${r.name}」请使用 Nekopass 完整备份导出 UDP 类型`)
     if (!['off', 'auto', 'v1', 'v2'].includes(r.proxy_accept) || !['off', 'v1', 'v2'].includes(r.proxy_send)) throw new Error(`规则「${r.name}」的 Proxy Protocol 模式无法兼容导出`)
     const row: NyanpassRule = { dest: [...r.targets], listen_port: r.listen_port, name: r.name }
