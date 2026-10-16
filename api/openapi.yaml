@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.18.3
+  version: 0.18.4
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Administrator-created accounts or optional email-verified registration. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -987,11 +987,13 @@ paths:
               required: [ids, action]
               properties:
                 ids: {type: array, minItems: 1, maxItems: 500, uniqueItems: true, items: {type: integer, format: int64}}
-                action: {type: string, enum: [enable, disable, delete, clear, group, switch]}
+                action: {type: string, enum: [enable, disable, delete, clear, group, switch, edit]}
+                patch: {$ref: '#/components/schemas/RuleBatchPatch'}
                 group_id: {type: integer, format: int64, description: For group action; 0 means ungrouped}
                 node_id: {type: integer, format: int64, description: For switch action; authorized for all selected users; random ports assigned}
       responses:
         '200': {description: 'ok and affected count; clear only resets display baseline, never quota or history'}
+        '400': {description: 'Invalid patch, incompatible protocol or unauthorized node; the entire batch is rolled back'}
         '403': {$ref: '#/components/responses/Error'}
   /rules/import:
     post:
@@ -1449,6 +1451,16 @@ components:
         default_rule_id: {type: integer, format: int64, minimum: 0, description: 'An administrator-owned child of this listener; used only for default_rule'}
         max_handshakes: {type: integer, minimum: 1, maximum: 4096, default: 128, description: 'Concurrent ClientHello readers per listener; released after classification. Each TCP peer additionally limited to 16'}
         handshake_timeout_seconds: {type: integer, minimum: 1, maximum: 30, default: 5}
+    RuleBatchPatch:
+      type: object
+      additionalProperties: false
+      description: 'For action edit. Omitted or null fields remain unchanged. At least one non-null field is required. All selected rules must pass normal ownership, node permissions and resource validation.'
+      properties:
+        node_id: {type: integer, format: int64, minimum: 1, nullable: true, description: 'Changing an ordinary ingress assigns a new random port; same ingress retains the port. Shared TLS rules cannot move through this patch.'}
+        egress_node_id: {type: integer, format: int64, minimum: 0, nullable: true, description: '0 explicitly selects direct forwarding; requires permission on every effective ingress'}
+        balance: {type: string, enum: [random, round_robin, least_connections], nullable: true}
+        proxy_accept_enabled: {type: boolean, nullable: true, description: 'False disables; true preserves an enabled mode or enables auto detection. Shared TLS listener reception remains administrator-managed. Enabling is TCP-only and requires administrator-configured trusted CIDRs.'}
+        proxy_send_enabled: {type: boolean, nullable: true, description: 'False disables; true preserves the existing enabled version or enables v2. Enabling is TCP-only.'}
     RuleInput:
       type: object
       required: [node_id, enabled]

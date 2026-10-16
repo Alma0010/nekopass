@@ -378,10 +378,11 @@ func (s *Server) deleteRule(w http.ResponseWriter, r *http.Request) {
 }
 
 type BatchInput struct {
-	IDs     []int64 `json:"ids"`
-	Action  string  `json:"action"`
-	GroupID int64   `json:"group_id"`
-	NodeID  int64   `json:"node_id"`
+	IDs     []int64         `json:"ids"`
+	Action  string          `json:"action"`
+	GroupID int64           `json:"group_id"`
+	NodeID  int64           `json:"node_id"`
+	Patch   *RuleBatchPatch `json:"patch,omitempty"`
 }
 
 func (s *Server) batchRules(w http.ResponseWriter, r *http.Request) {
@@ -423,6 +424,23 @@ func (s *Server) applyBatch(w http.ResponseWriter, r *http.Request, in BatchInpu
 		return
 	}
 	switch in.Action {
+	case "edit":
+		if e = in.Patch.validate(); e != nil {
+			break
+		}
+		for _, id := range in.IDs {
+			var input RuleInput
+			input, e = loadRule(ctx, tx, id)
+			if e == nil {
+				e = in.Patch.apply(&input)
+			}
+			if e == nil {
+				_, e = putRule(ctx, tx, u, id, input)
+			}
+			if e != nil {
+				break
+			}
+		}
 	case "delete":
 		_, e = tx.Exec(ctx, "DELETE FROM rules WHERE id=ANY($1)", in.IDs)
 	case "enable", "disable":
