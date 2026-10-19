@@ -12,7 +12,6 @@ import (
 	"time"
 
 	pb "github.com/nekopass/nekopass/internal/protocol"
-	"google.golang.org/protobuf/proto"
 )
 
 const maxDatagram = 65535
@@ -100,7 +99,7 @@ func (e *Engine) configureUDP(c *pb.ControlMessage) []string {
 		}
 	}
 	for id, l := range e.udpListeners {
-		if wanted[id] == nil || !proto.Equal(l.rule, wanted[id]) {
+		if wanted[id] == nil || !sameRuntimeRule(l.rule, wanted[id]) {
 			l.cancel()
 			l.conn.Close()
 			delete(e.udpListeners, id)
@@ -109,6 +108,7 @@ func (e *Engine) configureUDP(c *pb.ControlMessage) []string {
 	var failures []string
 	for id, r := range wanted {
 		if e.udpListeners[id] != nil {
+			e.udpListeners[id].runtime.group.Store(r)
 			continue
 		}
 		addr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(r.ListenHost, strconv.Itoa(int(r.ListenPort))))
@@ -125,6 +125,7 @@ func (e *Engine) configureUDP(c *pb.ControlMessage) []string {
 		l := &udpListener{rule: r, runtime: newRuleRuntime(r), conn: conn, ctx: ctx, cancel: cancel, sessions: map[netip.AddrPort]*udpAssociation{}}
 		l.runtime.configureNode(e.nodeConfiguration())
 		l.runtime.dialTarget = e.dialTarget
+		l.runtime.egress = e.egress
 		l.runtime.h2 = e.h2
 		e.udpListeners[id] = l
 		counter := e.counters[id]
@@ -225,14 +226,22 @@ func (r *ruleRuntime) dialDatagram(ctx context.Context, queued *atomic.Int64) (n
 		dialCtx, cancel := context.WithTimeout(ctx, r.dialTimeout)
 		var conn net.Conn
 		var err error
-		if r.policy.EgressNodeId == 0 {
+		var releaseExit func()
+		if r.policy.EgressGroupId != 0 {
+			conn, releaseExit, err = r.egress.dial(dialCtx, ctx, r.group.Load(), r.targets[i], true)
+		} else if r.policy.EgressNodeId == 0 {
 			conn, err = r.dialTarget(dialCtx, "udp", r.targets[i])
 		} else {
 			conn, err = dialDatagramTunnel(dialCtx, ctx, r.policy, r.targets[i], r.h2, queued)
 		}
 		cancel()
 		if err == nil {
-			return conn, func() { r.releaseTarget(i) }, nil
+			return conn, func() {
+				if releaseExit != nil {
+					releaseExit()
+				}
+				r.releaseTarget(i)
+			}, nil
 		}
 		r.releaseTarget(i)
 	}
@@ -303,7 +312,7 @@ func (e *Engine) runUDP(s *udpAssociation, a *Account, count *atomic.Int64) {
 		case <-s.ctx.Done():
 			return
 		case <-tick.C:
-			if !a.valid() || time.Since(time.Unix(0, s.last.Load())) > timeout || l.rule.EgressNodeId == 0 && !e.targetAllowed(target) {
+			if !a.valid() || time.Since(time.Unix(0, s.last.Load())) > timeout || l.rule.EgressNodeId == 0 && l.rule.EgressGroupId == 0 && !e.targetAllowed(target) {
 				return
 			}
 		case p := <-s.queue:

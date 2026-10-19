@@ -252,6 +252,14 @@ func (e *Engine) runNativeUDP(l *nativeUDPListener, peer *nativePeer, open nativ
 	if policy == nil {
 		return
 	}
+	if open.Target == tunnelHealthTarget {
+		_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+		var b [1]byte
+		if n, err := conn.Read(b[:]); err == nil && n == 1 && b[0] == 0 {
+			_, _ = conn.Write(b[:])
+		}
+		return
+	}
 	ctx, cancel := context.WithTimeout(peer.ctx, policy.dialTimeout)
 	target, err := e.dialTarget(ctx, "udp", open.Target)
 	cancel()

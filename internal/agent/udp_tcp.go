@@ -108,6 +108,9 @@ func dialRawDatagramTunnel(ctx context.Context, r *pb.Rule, target string) (net.
 		return nil, err
 	}
 	response.Body.Close()
+	if response.StatusCode == 502 && hmac.Equal([]byte(response.Header.Get("X-Stream-Reply")), []byte(h2ResponseProof(r.TunnelToken, binding, metadata))) {
+		return nil, errTunnelTarget
+	}
 	if response.StatusCode != 200 || !hmac.Equal([]byte(response.Header.Get("X-Stream-Reply")), []byte(h2ResponseProof(r.TunnelToken, binding, metadata))) {
 		return nil, errors.New("UDP tunnel authentication refused")
 	}
@@ -164,10 +167,19 @@ func (e *Engine) handleUDPStream(ctx context.Context, c net.Conn, reader *bufio.
 		e.serveRawCamouflage(ctx, c, reader, request)
 		return
 	}
+	if open.Target == tunnelHealthTarget {
+		header := ""
+		if scheme != nil {
+			header = "X-Stream-Padding-Version: " + strconv.Itoa(padding.WireVersion) + "\r\n"
+		}
+		_, _ = c.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nX-Stream-Reply: " + h2ResponseProof(key, binding, metadata) + "\r\n" + header + "\r\n"))
+		return
+	}
 	dialCtx, cancelDial := context.WithTimeout(ctx, policy.dialTimeout)
 	target, err := e.dialTarget(dialCtx, "udp", open.Target)
 	cancelDial()
 	if err != nil {
+		_, _ = c.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nX-Stream-Reply: " + h2ResponseProof(key, binding, metadata) + "\r\n\r\n"))
 		return
 	}
 	defer target.Close()

@@ -167,7 +167,7 @@ func (s *Server) saveNodePart(w http.ResponseWriter, r *http.Request, part strin
 				return
 			}
 		}
-		if e = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM rules WHERE node_id=$1 AND egress_node_id IS NULL)", id).Scan(&blocked); e != nil {
+		if e = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM rules WHERE node_id=$1 AND egress_node_id IS NULL AND egress_group_id IS NULL)", id).Scan(&blocked); e != nil {
 			s.dbError(w, e)
 			return
 		}
@@ -322,7 +322,7 @@ func (s *Server) saveNodePart(w http.ResponseWriter, r *http.Request, part strin
 			}
 		}
 	}
-	if _, e = tx.Exec(ctx, "DELETE FROM node_group_members WHERE node_id=$1", id); e != nil {
+	if _, e = tx.Exec(ctx, "DELETE FROM node_group_members WHERE node_id=$1 AND NOT(group_id=ANY(COALESCE($2::bigint[],'{}')))", id, v.GroupIDs); e != nil {
 		s.dbError(w, e)
 		return
 	}
@@ -454,21 +454,19 @@ func (s *Server) nodeGroups(w http.ResponseWriter, r *http.Request) {
 	if !admin(w, r) {
 		return
 	}
-	rows, e := s.Pool.Query(r.Context(), `SELECT g.id,g.name,g.description,g.enabled,g.sort_order,g.strategy,COALESCE((SELECT array_agg(node_id ORDER BY node_id) FROM node_group_members WHERE group_id=g.id),'{}') AS node_ids,(SELECT count(*) FROM plan_node_groups WHERE group_id=g.id) AS plan_count FROM node_groups g ORDER BY g.sort_order,g.id`)
+	rows, e := s.Pool.Query(r.Context(), `SELECT g.id,g.name,g.description,g.enabled,g.sort_order,g.strategy,g.health_interval_seconds,g.health_failures,g.health_successes,COALESCE((SELECT jsonb_agg(jsonb_build_object('node_id',node_id,'role',role,'weight',weight) ORDER BY node_id) FROM node_group_members WHERE group_id=g.id),'[]') AS members,COALESCE((SELECT array_agg(node_id ORDER BY node_id) FROM node_group_members WHERE group_id=g.id),'{}') AS node_ids,(SELECT count(*) FROM plan_node_groups WHERE group_id=g.id) AS plan_count FROM node_groups g ORDER BY g.sort_order,g.id`)
 	s.sendRows(w, rows, e)
 }
 func (s *Server) saveNodeGroup(w http.ResponseWriter, r *http.Request) {
 	if !admin(w, r) {
 		return
 	}
-	var v struct {
-		Name        string  `json:"name"`
-		Description string  `json:"description"`
-		Enabled     bool    `json:"enabled"`
-		SortOrder   int     `json:"sort_order"`
-		NodeIDs     []int64 `json:"node_ids"`
-	}
+	v := nodeGroupInput{Strategy: "least_connections", HealthIntervalSeconds: 5, HealthFailures: 3, HealthSuccesses: 2}
 	if !decode(w, r, &v) {
+		return
+	}
+	if err := v.normalize(); err != nil {
+		fail(w, 400, err.Error())
 		return
 	}
 	v.Name = strings.TrimSpace(v.Name)
@@ -494,7 +492,7 @@ func (s *Server) saveNodeGroup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	tag, e := tx.Exec(ctx, "UPDATE node_groups SET name=$2,description=$3,enabled=$4,sort_order=$5 WHERE id=$1", id, v.Name, v.Description, v.Enabled, v.SortOrder)
+	tag, e := tx.Exec(ctx, "UPDATE node_groups SET name=$2,description=$3,enabled=$4,sort_order=$5,strategy=$6,health_interval_seconds=$7,health_failures=$8,health_successes=$9 WHERE id=$1", id, v.Name, v.Description, v.Enabled, v.SortOrder, v.Strategy, v.HealthIntervalSeconds, v.HealthFailures, v.HealthSuccesses)
 	if e != nil {
 		s.dbError(w, e)
 		return
@@ -503,12 +501,18 @@ func (s *Server) saveNodeGroup(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "节点组不存在")
 		return
 	}
-	if _, e = tx.Exec(ctx, "DELETE FROM node_group_members WHERE group_id=$1", id); e != nil {
+	if _, e = tx.Exec(ctx, "DELETE FROM node_group_members WHERE group_id=$1 AND NOT(node_id=ANY(COALESCE($2::bigint[],'{}')))", id, v.NodeIDs); e != nil {
 		s.dbError(w, e)
 		return
 	}
 	for _, n := range v.NodeIDs {
 		if _, e = tx.Exec(ctx, "INSERT INTO node_group_members(group_id,node_id) VALUES($1,$2) ON CONFLICT DO NOTHING", id, n); e != nil {
+			s.dbError(w, e)
+			return
+		}
+	}
+	for _, m := range v.Members {
+		if _, e = tx.Exec(ctx, "UPDATE node_group_members SET role=$3,weight=$4 WHERE group_id=$1 AND node_id=$2", id, m.NodeID, m.Role, m.Weight); e != nil {
 			s.dbError(w, e)
 			return
 		}
@@ -534,7 +538,7 @@ func (s *Server) deleteNodeGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	tag, e := tx.Exec(ctx, "DELETE FROM node_groups WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM plan_node_groups WHERE group_id=$1) AND NOT EXISTS(SELECT 1 FROM user_node_groups WHERE group_id=$1)", id)
+	tag, e := tx.Exec(ctx, "DELETE FROM node_groups WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM plan_node_groups WHERE group_id=$1) AND NOT EXISTS(SELECT 1 FROM user_node_groups WHERE group_id=$1) AND NOT EXISTS(SELECT 1 FROM rules WHERE egress_group_id=$1)", id)
 	if e != nil {
 		s.dbError(w, e)
 		return

@@ -14,7 +14,6 @@ import (
 
 	pb "github.com/nekopass/nekopass/internal/protocol"
 	"github.com/nekopass/nekopass/internal/tlsinbound"
-	"google.golang.org/protobuf/proto"
 )
 
 type inboundRoute struct {
@@ -123,7 +122,7 @@ func (e *Engine) configureTLSInbounds(c *pb.ControlMessage, restart bool) []stri
 			var route *inboundRoute
 			if old != nil && !restart {
 				route = old.routes[rule.Id]
-				if route != nil && (route.account != e.users[rule.UserId] || !proto.Equal(route.l.rule, rule)) {
+				if route != nil && (route.account != e.users[rule.UserId] || !sameRuntimeRule(route.l.rule, rule)) {
 					route = nil
 				}
 			}
@@ -131,6 +130,7 @@ func (e *Engine) configureTLSInbounds(c *pb.ControlMessage, restart bool) []stri
 				ctx, cancel := context.WithCancel(context.Background())
 				runtime := newRuleRuntime(rule)
 				runtime.configureNode(e.nodeConfiguration())
+				runtime.egress = e.egress
 				runtime.h2 = e.h2
 				runtime.dialTarget = e.dialTarget
 				count := e.counters[rule.Id]
@@ -140,6 +140,7 @@ func (e *Engine) configureTLSInbounds(c *pb.ControlMessage, restart bool) []stri
 				}
 				route = &inboundRoute{l: &listener{rule: rule, runtime: runtime, ctx: ctx, cancel: cancel}, account: e.users[rule.UserId], count: count}
 			}
+			route.l.runtime.group.Store(rule)
 			snapshot.routes[rule.Id] = route
 			for _, name := range names {
 				snapshot.names[name] = route

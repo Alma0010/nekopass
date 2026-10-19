@@ -3,7 +3,7 @@ import type { RuleInput } from './api'
 export type NyanpassRule = { dest: string[]; listen_port: number; name: string; proxy_protocol?: number; accept_proxy_protocol?: number }
 type LegacyRuleInput = Omit<RuleInput, 'protocol'> & { protocol?: RuleInput['protocol'] | 'tcp_udp' }
 export type RuleImport = { format: 'nyanpass'; rules: NyanpassRule[] } | { format: 'nekopass'; rules: LegacyRuleInput[] }
-export type ImportDestination = { userID: number; nodeID: number; egressNodeID: number; groupID: number; trustedCIDRs: string[]; randomPorts: boolean }
+export type ImportDestination = { userID: number; nodeID: number; egressNodeID: number; egressGroupID?:number; groupID: number; trustedCIDRs: string[]; randomPorts: boolean }
 
 // Values are verified against Nyanpass exports; unknown modes must never be guessed.
 const proxySendModes: Record<number, string> = {
@@ -65,7 +65,7 @@ export function prepareRuleImport(data: RuleImport, destination: ImportDestinati
     const send = proxySendModes[r.proxy_protocol ?? 0]
     if (send === undefined) throw new Error('不支持此 proxy_protocol 数值')
     return {
-      user_id: destination.userID, node_id: destination.nodeID, egress_node_id: destination.egressNodeID,
+      user_id: destination.userID, node_id: destination.nodeID, egress_node_id: destination.egressNodeID,egress_group_id:destination.egressGroupID||0,
       name: r.name, group_id: destination.groupID, listen_port: destination.randomPorts ? 0 : r.listen_port,
       targets: [...r.dest], balance: 'random', speed_mbps: 0, ip_limit: 0, connection_limit: 0,
       proxy_accept: accept, proxy_send: send, proxy_trusted_cidrs: [], enabled: true,

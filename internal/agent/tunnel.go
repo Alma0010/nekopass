@@ -41,6 +41,9 @@ func tunnelRuleAllowed(policy *tunnelPolicy, ruleID, ingress, userID, epoch int6
 	if allowed == nil || allowed.IngressNodeId != ingress || allowed.UserId != userID || allowed.QuotaEpoch != epoch || allowed.ExpiresUnix != 0 && time.Now().Unix() >= allowed.ExpiresUnix {
 		return false
 	}
+	if target == tunnelHealthTarget {
+		return true
+	}
 	for _, address := range allowed.Targets {
 		if address == target {
 			return true
@@ -131,6 +134,9 @@ func dialTunnel(ctx context.Context, rule *pb.Rule, target string) (net.Conn, er
 	}
 	if reply[0] != 0 {
 		conn.Close()
+		if reply[0] == 2 {
+			return nil, errTunnelTarget
+		}
 		return nil, fmt.Errorf("tunnel exit rejected target or connection: %d", reply[0])
 	}
 	_ = conn.SetDeadline(time.Time{})
@@ -328,6 +334,10 @@ func (e *Engine) handleTunnel(ctx context.Context, upstream net.Conn) {
 	userID, epoch := allowed.UserId, allowed.QuotaEpoch
 	if !e.plainTunnelAllowed(ruleID, ingress, userID, epoch, target, key) {
 		_, _ = upstream.Write([]byte{1})
+		return
+	}
+	if target == tunnelHealthTarget {
+		_, _ = upstream.Write([]byte{0})
 		return
 	}
 	dialCtx, cancelDial := context.WithTimeout(ctx, policy.dialTimeout)

@@ -6,6 +6,7 @@ import "errors"
 // Ownership, quotas, targets, SNI and listener settings cannot be patched here.
 type RuleBatchPatch struct {
 	NodeID             *int64  `json:"node_id,omitempty"`
+	EgressGroupID      *int64  `json:"egress_group_id,omitempty"`
 	EgressNodeID       *int64  `json:"egress_node_id,omitempty"`
 	Balance            *string `json:"balance,omitempty"`
 	ProxyAcceptEnabled *bool   `json:"proxy_accept_enabled,omitempty"`
@@ -13,10 +14,10 @@ type RuleBatchPatch struct {
 }
 
 func (p *RuleBatchPatch) validate() error {
-	if p == nil || p.NodeID == nil && p.EgressNodeID == nil && p.Balance == nil && p.ProxyAcceptEnabled == nil && p.ProxySendEnabled == nil {
+	if p == nil || p.NodeID == nil && p.EgressNodeID == nil && p.EgressGroupID == nil && p.Balance == nil && p.ProxyAcceptEnabled == nil && p.ProxySendEnabled == nil {
 		return errors.New("请选择至少一个需要更新的字段")
 	}
-	if p.NodeID != nil && *p.NodeID <= 0 || p.EgressNodeID != nil && *p.EgressNodeID < 0 {
+	if p.NodeID != nil && *p.NodeID <= 0 || p.EgressNodeID != nil && *p.EgressNodeID < 0 || p.EgressGroupID != nil && *p.EgressGroupID < 0 || p.EgressGroupID != nil && p.EgressNodeID != nil && *p.EgressGroupID != 0 && *p.EgressNodeID != 0 {
 		return errors.New("入口或出口节点无效")
 	}
 	if p.Balance != nil && *p.Balance != "random" && *p.Balance != "round_robin" && *p.Balance != "least_connections" {
@@ -35,6 +36,13 @@ func (p *RuleBatchPatch) apply(in *RuleInput) error {
 	}
 	if p.EgressNodeID != nil {
 		in.EgressNodeID = *p.EgressNodeID
+		in.EgressGroupID = 0
+	}
+	if p.EgressGroupID != nil {
+		in.EgressGroupID = *p.EgressGroupID
+		if in.EgressGroupID != 0 {
+			in.EgressNodeID = 0
+		}
 	}
 	if p.Balance != nil {
 		in.Balance = *p.Balance
