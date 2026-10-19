@@ -52,7 +52,7 @@ func (s *Server) nodes(w http.ResponseWriter, r *http.Request) {
 	if !admin(w, r) {
 		return
 	}
-	rows, e := s.Pool.Query(r.Context(), `SELECT n.id,n.name,n.agent_version,n.update_supported,(SELECT jsonb_build_object('generation',u.generation,'version',u.version,'state',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN 'unconfirmed' ELSE u.state END,'error',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN '超过 15 分钟未收到更新结果，请检查节点连接及更新日志' ELSE u.error END,'requested_at',u.requested_at,'updated_at',u.updated_at) FROM node_updates u WHERE u.node_id=n.id) AS update_status,n.token,(n.instance_id<>'') AS bound,n.public_address,n.notes,n.enabled,n.listen_host,n.port_min,n.port_max,n.max_connections,n.dial_timeout_seconds,n.idle_timeout_seconds,n.udp_idle_timeout_seconds,n.probe_interval_seconds,n.disk_path,n.network_interfaces,n.ingress_enabled,n.allow_direct,n.tunnel_exit_enabled,n.tunnel_protocol,CASE WHEN n.tunnel_protocol IN ('plain_h2','tls_h2') THEN 'h2' WHEN n.tunnel_protocol IN ('plain_udp','dtls_udp') THEN 'raw_udp' ELSE 'raw_tcp' END AS tunnel_transport,CASE WHEN n.tunnel_protocol IN ('tls_tcp','tls_h2','dtls_udp') THEN 'tls' ELSE 'none' END AS tunnel_security,n.tls_config AS tls,n.tls_status,n.tls_error,n.tls_not_after,n.protocol_version,n.tunnel_listen_host,n.tunnel_listen_port,n.tunnel_public_host,n.last_seen,n.applied_revision,n.config_revision,n.sync_error,n.active_connections,n.probe,n.probe_received_at,COALESCE(n.last_seen>now()-interval '12 seconds',false) AS online,COALESCE((SELECT array_agg(group_id ORDER BY group_id) FROM node_group_members WHERE node_id=n.id),'{}') AS group_ids,COALESCE((SELECT array_agg(ingress_node_id ORDER BY ingress_node_id) FROM node_tunnel_links WHERE egress_node_id=n.id),'{}') AS allowed_ingress_ids,(SELECT count(*) FROM rules WHERE node_id=n.id) AS rule_count FROM nodes n ORDER BY n.id`)
+	rows, e := s.Pool.Query(r.Context(), `SELECT n.id,n.name,n.agent_version,n.update_supported,(SELECT jsonb_build_object('generation',u.generation,'version',u.version,'state',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN 'unconfirmed' ELSE u.state END,'error',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN '超过 15 分钟未收到更新结果，请检查节点连接及更新日志' ELSE u.error END,'requested_at',u.requested_at,'updated_at',u.updated_at) FROM node_updates u WHERE u.node_id=n.id) AS update_status,n.token,(n.instance_id<>'') AS bound,n.public_address,n.notes,n.enabled,n.listen_host,n.port_min,n.port_max,n.max_connections,n.dial_timeout_seconds,n.idle_timeout_seconds,n.udp_idle_timeout_seconds,n.probe_interval_seconds,n.disk_path,n.network_interfaces,n.ingress_enabled,n.allow_direct,n.tunnel_exit_enabled,n.tunnel_protocol,CASE WHEN n.tunnel_protocol IN ('plain_h2','tls_h2') THEN 'h2' WHEN n.tunnel_protocol IN ('plain_udp','dtls_udp') THEN 'raw_udp' ELSE 'raw_tcp' END AS tunnel_transport,CASE WHEN n.tunnel_protocol IN ('tls_tcp','tls_h2','dtls_udp') THEN 'tls' ELSE 'none' END AS tunnel_security,n.tls_config AS tls,n.tls_status,n.tls_error,n.tls_not_after,n.protocol_version,n.tunnel_listen_host,n.tunnel_listen_port,n.tunnel_public_host,n.last_seen,n.applied_revision,n.config_revision,n.sync_error,n.active_connections,n.probe,n.probe_received_at,COALESCE(n.last_seen>now()-interval '12 seconds',false) AS online,COALESCE((SELECT array_agg(group_id ORDER BY group_id) FROM node_group_members WHERE node_id=n.id),'{}') AS group_ids,COALESCE((SELECT array_agg(ingress_node_id ORDER BY ingress_node_id) FROM node_tunnel_links WHERE egress_node_id=n.id),'{}') AS allowed_ingress_ids,(SELECT count(*) FROM rule_ingress_nodes WHERE node_id=n.id) AS rule_count FROM nodes n ORDER BY n.id`)
 	s.sendRows(w, rows, e)
 }
 func (s *Server) saveNode(w http.ResponseWriter, r *http.Request) { s.saveNodePart(w, r, "full") }
@@ -158,7 +158,7 @@ func (s *Server) saveNodePart(w http.ResponseWriter, r *http.Request, part strin
 	if id != 0 {
 		var blocked bool
 		if !v.IngressEnabled {
-			if e = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM rules WHERE node_id=$1)", id).Scan(&blocked); e != nil {
+			if e = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM rule_ingress_nodes WHERE node_id=$1)", id).Scan(&blocked); e != nil {
 				s.dbError(w, e)
 				return
 			}
@@ -167,7 +167,7 @@ func (s *Server) saveNodePart(w http.ResponseWriter, r *http.Request, part strin
 				return
 			}
 		}
-		if e = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM rules WHERE node_id=$1 AND egress_node_id IS NULL)", id).Scan(&blocked); e != nil {
+		if e = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM rules r JOIN rule_ingress_nodes ri ON ri.rule_id=r.id WHERE ri.node_id=$1 AND egress_node_id IS NULL)", id).Scan(&blocked); e != nil {
 			s.dbError(w, e)
 			return
 		}
@@ -249,7 +249,7 @@ func (s *Server) saveNodePart(w http.ResponseWriter, r *http.Request, part strin
 		e = tx.QueryRow(ctx, "INSERT INTO nodes(name,token_hash,token) VALUES($1,$2,$3) RETURNING id", v.Name, tokenHash, token).Scan(&id)
 	} else {
 		var conflict bool
-		e = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM rules WHERE node_id=$1 AND tls_inbound_id IS NULL AND listen_port NOT BETWEEN $2 AND $3)", id, v.PortMin, v.PortMax).Scan(&conflict)
+		e = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM rules r JOIN rule_ingress_nodes ri ON ri.rule_id=r.id WHERE ri.node_id=$1 AND tls_inbound_id IS NULL AND listen_port NOT BETWEEN $2 AND $3)", id, v.PortMin, v.PortMax).Scan(&conflict)
 		if e == nil && conflict {
 			fail(w, 409, "已有规则端口超出新范围，请先修改这些规则")
 			return
@@ -295,7 +295,7 @@ func (s *Server) saveNodePart(w http.ResponseWriter, r *http.Request, part strin
 			return
 		}
 	}
-	if _, e = tx.Exec(ctx, "DELETE FROM node_tunnel_links l WHERE egress_node_id=$1 AND NOT (ingress_node_id=ANY($2::bigint[])) AND NOT EXISTS(SELECT 1 FROM rules r WHERE r.node_id=l.ingress_node_id AND r.egress_node_id=l.egress_node_id)", id, v.AllowedIngressIDs); e != nil {
+	if _, e = tx.Exec(ctx, "DELETE FROM node_tunnel_links l WHERE egress_node_id=$1 AND NOT (ingress_node_id=ANY($2::bigint[])) AND NOT EXISTS(SELECT 1 FROM rules r JOIN rule_ingress_nodes ri ON ri.rule_id=r.id WHERE ri.node_id=l.ingress_node_id AND r.egress_node_id=l.egress_node_id)", id, v.AllowedIngressIDs); e != nil {
 		s.dbError(w, e)
 		return
 	}
@@ -333,7 +333,7 @@ func (s *Server) saveNodePart(w http.ResponseWriter, r *http.Request, part strin
 		}
 	}
 	if e = finishRules(ctx, tx); e != nil {
-		s.dbError(w, e)
+		fail(w, 400, publicOperationError(e))
 		return
 	}
 	result := map[string]any{"id": id, "token": token}
@@ -404,7 +404,7 @@ func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if e = finishRules(ctx, tx); e != nil {
-		s.dbError(w, e)
+		fail(w, 400, publicOperationError(e))
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
@@ -514,7 +514,7 @@ func (s *Server) saveNodeGroup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if e = finishRules(ctx, tx); e != nil {
-		s.dbError(w, e)
+		fail(w, 400, publicOperationError(e))
 		return
 	}
 	writeJSON(w, 200, map[string]int64{"id": id})
@@ -534,17 +534,17 @@ func (s *Server) deleteNodeGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	tag, e := tx.Exec(ctx, "DELETE FROM node_groups WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM plan_node_groups WHERE group_id=$1) AND NOT EXISTS(SELECT 1 FROM user_node_groups WHERE group_id=$1)", id)
+	tag, e := tx.Exec(ctx, "DELETE FROM node_groups WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM plan_node_groups WHERE group_id=$1) AND NOT EXISTS(SELECT 1 FROM user_node_groups WHERE group_id=$1) AND NOT EXISTS(SELECT 1 FROM rules WHERE ingress_group_id=$1)", id)
 	if e != nil {
 		s.dbError(w, e)
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		fail(w, 409, "节点组不存在或正在被套餐或用户使用")
+		fail(w, 409, "节点组不存在或正在被套餐、用户或规则使用")
 		return
 	}
 	if e = finishRules(ctx, tx); e != nil {
-		s.dbError(w, e)
+		fail(w, 400, publicOperationError(e))
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})

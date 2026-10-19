@@ -83,3 +83,27 @@ func TestPlainTunnelValidatesLinkAndRuleTarget(t *testing.T) {
 		t.Fatal("removed rule still available")
 	}
 }
+
+func TestGroupTunnelPolicyRetainsAllIngressAuthorizations(t *testing.T) {
+	config := &pb.ControlMessage{EgressRules: []*pb.EgressRule{
+		{RuleId: 77, IngressNodeId: 11, UserId: 5, QuotaEpoch: 2, Targets: []string{"example.com:443"}, Protocol: "tcp"},
+		{RuleId: 77, IngressNodeId: 12, UserId: 5, QuotaEpoch: 2, Targets: []string{"example.com:443"}, Protocol: "tcp"},
+	}}
+	policy := policyOf(config)
+	for _, ingress := range []int64{11, 12} {
+		if !tunnelRuleAllowed(policy, 77, ingress, 5, 2, "example.com:443") {
+			t.Fatalf("ingress %d was overwritten", ingress)
+		}
+		if !h2RuleAllowed(policy, h2Open{Rule: 77, Ingress: ingress, User: 5, Epoch: 2, Target: "example.com:443", Network: "tcp"}) {
+			t.Fatalf("h2 ingress %d rejected", ingress)
+		}
+	}
+	if tunnelRuleAllowed(policy, 77, 13, 5, 2, "example.com:443") || tunnelRuleAllowed(policy, 77, 11, 6, 2, "example.com:443") || tunnelRuleAllowed(policy, 77, 11, 5, 3, "example.com:443") || tunnelRuleAllowed(policy, 77, 11, 5, 2, "other.example.com:443") {
+		t.Fatal("authorization boundary widened")
+	}
+	config.EgressRules = config.EgressRules[1:]
+	policy = policyOf(config)
+	if tunnelRuleAllowed(policy, 77, 11, 5, 2, "example.com:443") || !tunnelRuleAllowed(policy, 77, 12, 5, 2, "example.com:443") {
+		t.Fatal("removing one ingress damaged the other authorization")
+	}
+}

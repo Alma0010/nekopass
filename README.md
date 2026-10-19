@@ -57,7 +57,19 @@ wget https://github.com/hajidishu/nekopass/releases/latest/download/install-pane
 
 ## 安装节点
 
-在后台「节点管理」复制安装命令，到节点服务器以 root 执行。
+在后台「节点管理」复制安装命令，到节点服务器以 root 执行。安装、升级及卸载的完整步骤见 [安装节点](docs/guide/node.md)。
+
+## 卸载节点
+
+默认完整卸载本机全部节点（含独立命名的节点）、配置、状态数据、更新服务和专用账户，保留面板及数据库。只卸载一个节点时指定服务名；可先用 `--dry-run` 查看范围。
+
+```bash
+sudo bash scripts/uninstall-agent.sh --dry-run
+sudo bash scripts/uninstall-agent.sh
+sudo bash scripts/uninstall-agent.sh --service-name nekopass-agent-hk1
+```
+
+也可单独下载发布附件 `uninstall-agent.sh` 后运行。卸载不会自动删除面板中的节点记录。
 
 ## 服务管理
 

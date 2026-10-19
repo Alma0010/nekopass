@@ -2,6 +2,8 @@
 
 支持 Linux、amd64 / arm64，要求运行中的 systemd。
 
+本页包含 [安装接入](#一键接入)、[升级](#升级) 和 [卸载节点](#卸载节点) 的操作方法。
+
 ## 一键接入
 
 在后台「节点管理」创建节点，复制该节点的「安装命令」，以 root 在节点服务器执行。
@@ -47,6 +49,46 @@ sudo nekopassctl agent update
 目标 IP 限制使用 v0.15.2 或以上节点；raw(udp) 中转使用 v0.17.1 或以上的面板及节点。
 
 连接配置位于 `/etc/nekopass/agent.env`，运行状态位于 `/var/lib/nekopass-agent/state.db`。新增服务器时，在后台创建对应节点。
+
+## 卸载节点
+
+在需要卸载的节点服务器上执行。默认完整卸载本机全部节点，包括独立命名的节点，以及对应的服务、更新服务、配置、状态数据和专用账户；同机面板和数据库保留。
+
+### 取得脚本
+
+脚本位于本仓库的 `scripts/uninstall-agent.sh`。下面的示例在仓库根目录执行；包含此脚本的版本发布后，也可从 Releases 下载 `uninstall-agent.sh` 附件，此时将命令中的 `scripts/uninstall-agent.sh` 改为 `uninstall-agent.sh`。
+
+### 预览卸载范围
+
+只列出将清理的服务和文件，不修改系统：
+
+```bash
+sudo bash scripts/uninstall-agent.sh --dry-run
+```
+
+### 完整卸载所有节点（默认）
+
+```bash
+sudo bash scripts/uninstall-agent.sh
+```
+
+### 只卸载一个节点
+
+使用安装时指定的服务名。例如，只卸载 `nekopass-agent-hk1`：
+
+```bash
+sudo bash scripts/uninstall-agent.sh --service-name nekopass-agent-hk1
+```
+
+服务名也可带 `.service`。预览单个节点的卸载范围时，将两个参数一起使用：
+
+```bash
+sudo bash scripts/uninstall-agent.sh --service-name nekopass-agent-hk1 --dry-run
+```
+
+默认节点的服务名是 `nekopass-agent`，只卸载默认节点时同样使用 `--service-name nekopass-agent`。
+
+卸载会删除本地状态和配置备份；面板中的节点记录需按需手动删除。脚本先停止节点和更新服务；更新锁仍被命令行更新占用时退出，等待更新完成后重试。
 
 ## 抢占实例重建
 

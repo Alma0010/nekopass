@@ -102,3 +102,15 @@ test('SNI passthrough rules require full backup and survive native import', () =
   assert.deepEqual(imported.sni_names,['app.example.com'])
   assert.deepEqual(imported.origin_tls,rule.origin_tls)
 })
+
+
+test('group imports retain one binding and full backups preserve it', () => {
+  const [rule]=prepareRuleImport(parseRuleImport(JSON.stringify(example)),{...destination,nodeID:0,ingressGroupID:42})
+  assert.equal(rule.node_id,0)
+  assert.equal(rule.ingress_group_id,42)
+  const [restored]=prepareRuleImport(parseRuleImport(JSON.stringify({rules:[rule]})),{...destination,userID:9})
+  assert.equal(restored.ingress_group_id,42)
+  assert.equal(restored.node_id,0)
+  assert.equal(restored.user_id,9)
+  assert.throws(()=>encodeNyanpassRules([rule]),/完整备份/)
+})

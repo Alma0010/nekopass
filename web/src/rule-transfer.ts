@@ -3,7 +3,7 @@ import type { RuleInput } from './api'
 export type NyanpassRule = { dest: string[]; listen_port: number; name: string; proxy_protocol?: number; accept_proxy_protocol?: number }
 type LegacyRuleInput = Omit<RuleInput, 'protocol'> & { protocol?: RuleInput['protocol'] | 'tcp_udp' }
 export type RuleImport = { format: 'nyanpass'; rules: NyanpassRule[] } | { format: 'nekopass'; rules: LegacyRuleInput[] }
-export type ImportDestination = { userID: number; nodeID: number; egressNodeID: number; groupID: number; trustedCIDRs: string[]; randomPorts: boolean }
+export type ImportDestination = { userID: number; nodeID: number; ingressGroupID?:number; egressNodeID: number; groupID: number; trustedCIDRs: string[]; randomPorts: boolean }
 
 // Values are verified against Nyanpass exports; unknown modes must never be guessed.
 const proxySendModes: Record<number, string> = {
@@ -59,13 +59,13 @@ export function prepareRuleImport(data: RuleImport, destination: ImportDestinati
     if (rules.length > 500) throw new Error('拆分后每次最多导入 500 条规则')
     return rules
   }
-  if (!destination.nodeID) throw new Error('请选择导入规则的入口节点')
+  if (!destination.nodeID&&!destination.ingressGroupID) throw new Error('请选择导入规则的入口节点')
   return data.rules.map(r => {
     const accept = r.accept_proxy_protocol === 1 ? 'auto' : 'off'
     const send = proxySendModes[r.proxy_protocol ?? 0]
     if (send === undefined) throw new Error('不支持此 proxy_protocol 数值')
     return {
-      user_id: destination.userID, node_id: destination.nodeID, egress_node_id: destination.egressNodeID,
+      user_id: destination.userID, node_id: destination.ingressGroupID?0:destination.nodeID, ingress_group_id:destination.ingressGroupID||0, egress_node_id: destination.egressNodeID,
       name: r.name, group_id: destination.groupID, listen_port: destination.randomPorts ? 0 : r.listen_port,
       targets: [...r.dest], balance: 'random', speed_mbps: 0, ip_limit: 0, connection_limit: 0,
       proxy_accept: accept, proxy_send: send, proxy_trusted_cidrs: [], enabled: true,
@@ -75,6 +75,7 @@ export function prepareRuleImport(data: RuleImport, destination: ImportDestinati
 
 export function encodeNyanpassRules(rules: RuleInput[]): string {
   return rules.map(r => {
+ if(r.ingress_group_id)throw new Error(`规则「${r.name}」请使用 Nekopass 完整备份保留入口节点组`)
  if(r.tls_inbound_id||r.origin_tls?.enabled)throw new Error(`规则「${r.name}」请使用 Nekopass 完整备份保留 TLS 入站与回源设置`)
  if(r.protocol&&r.protocol!=='tcp')throw new Error(`规则「${r.name}」请使用 Nekopass 完整备份导出 UDP 类型`)
     if (!['off', 'auto', 'v1', 'v2'].includes(r.proxy_accept) || !['off', 'v1', 'v2'].includes(r.proxy_send)) throw new Error(`规则「${r.name}」的 Proxy Protocol 模式无法兼容导出`)

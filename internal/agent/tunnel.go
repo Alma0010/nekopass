@@ -29,7 +29,7 @@ type tunnelListener struct {
 type tunnelPolicy struct {
 	nativeRoutes map[[16]byte]nativeLink
 	links        map[int64]string
-	rules        map[int64]*pb.EgressRule
+	rules        map[[2]int64]*pb.EgressRule
 	dialTimeout  time.Duration
 }
 
@@ -37,7 +37,7 @@ func tunnelRuleAllowed(policy *tunnelPolicy, ruleID, ingress, userID, epoch int6
 	if policy == nil {
 		return false
 	}
-	allowed := policy.rules[ruleID]
+	allowed := policy.rules[[2]int64{ruleID, ingress}]
 	if allowed == nil || allowed.IngressNodeId != ingress || allowed.UserId != userID || allowed.QuotaEpoch != epoch || allowed.ExpiresUnix != 0 && time.Now().Unix() >= allowed.ExpiresUnix {
 		return false
 	}
@@ -138,7 +138,7 @@ func dialTunnel(ctx context.Context, rule *pb.Rule, target string) (net.Conn, er
 }
 
 func policyOf(c *pb.ControlMessage) *tunnelPolicy {
-	p := &tunnelPolicy{links: map[int64]string{}, rules: map[int64]*pb.EgressRule{}, dialTimeout: 8 * time.Second}
+	p := &tunnelPolicy{links: map[int64]string{}, rules: map[[2]int64]*pb.EgressRule{}, dialTimeout: 8 * time.Second}
 	p.nativeRoutes = map[[16]byte]nativeLink{}
 	if c.Node != nil && c.Node.DialTimeoutSeconds > 0 {
 		p.dialTimeout = time.Duration(c.Node.DialTimeoutSeconds) * time.Second
@@ -148,7 +148,7 @@ func policyOf(c *pb.ControlMessage) *tunnelPolicy {
 		p.nativeRoutes[nativeRouteTag(link.Token)] = nativeLink{ingress: link.IngressNodeId, key: link.Token}
 	}
 	for _, rule := range c.EgressRules {
-		p.rules[rule.RuleId] = proto.Clone(rule).(*pb.EgressRule)
+		p.rules[[2]int64{rule.RuleId, rule.IngressNodeId}] = proto.Clone(rule).(*pb.EgressRule)
 	}
 	return p
 }
@@ -314,7 +314,7 @@ func (e *Engine) handleTunnel(ctx context.Context, upstream net.Conn) {
 	if policy == nil {
 		return
 	}
-	allowed := policy.rules[ruleID]
+	allowed := policy.rules[[2]int64{ruleID, ingress}]
 	key := string(header[20:84])
 	if allowed == nil || len(policy.links[ingress]) != 64 || policy.links[ingress] != key {
 		return

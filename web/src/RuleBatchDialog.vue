@@ -2,9 +2,9 @@
 import {computed,reactive,ref,watch} from 'vue'
 import {ElMessage} from 'element-plus'
 import Icon from './Icon.vue'
-import type {Rule,RuleNode,RuleBatchPatch} from './api'
+import type {Rule,RuleNode,RuleBatchPatch,RuleNodeGroup} from './api'
 
-const props=defineProps<{modelValue:boolean;rules:Rule[];nodes:RuleNode[];busy:boolean;limitsLabel:string}>()
+const props=defineProps<{modelValue:boolean;rules:Rule[];nodes:RuleNode[];nodeGroups?:RuleNodeGroup[];busy:boolean;limitsLabel:string}>()
 const emit=defineEmits<{
  'update:modelValue':[value:boolean]
  save:[value:{ids:number[];patch:RuleBatchPatch}]
@@ -17,8 +17,9 @@ function clearField(key:keyof RuleBatchPatch){delete form[key]}
 const hasSharedTLS=computed(()=>props.rules.some(r=>!!r.tls_inbound_id))
 const hasUDP=computed(()=>props.rules.some(r=>r.protocol==='udp'))
 const ingressNodes=computed(()=>props.nodes.filter(n=>n.ingress_enabled))
-const ingressIDs=computed(()=>[...new Set(props.rules.map(r=>form.node_id??r.node_id))])
-const directAllowed=computed(()=>ingressIDs.value.every(id=>props.nodes.some(n=>n.id===id&&n.allow_direct)))
+const ingressIDs=computed(()=>[...new Set(form.ingress_group_id ? props.nodeGroups?.find(g=>g.id===form.ingress_group_id)?.node_ids||[] : props.rules.flatMap(r=>form.node_id?[form.node_id]:r.ingress_group_id?(r.ingress_nodes||[]).map(n=>n.node_id):[r.node_id]))])
+const ingressChoice=computed({get:()=>form.ingress_group_id?'g:'+form.ingress_group_id:form.node_id?'n:'+form.node_id:undefined,set:(value:string|undefined)=>{delete form.node_id;delete form.ingress_group_id;if(value){const [kind,id]=value.split(':');if(kind==='g')form.ingress_group_id=Number(id);else form.node_id=Number(id)}}})
+const directAllowed=computed(()=>ingressIDs.value.length>0&&ingressIDs.value.every(id=>props.nodes.some(n=>n.id===id&&n.allow_direct)||props.nodeGroups?.some(g=>g.members.some(n=>n.id===id&&n.allow_direct))))
 const exitNodes=computed(()=>props.nodes.filter(n=>n.tunnel_exit_enabled&&
  ingressIDs.value.every(id=>id!==n.id&&n.allowed_ingress_ids.includes(id))&&
  (!n.tunnel_protocol.endsWith('_udp')||props.rules.every(r=>r.protocol==='udp'))))
@@ -28,7 +29,7 @@ watch([exitNodes,directAllowed],()=>{
 function submit(){
  if(props.busy)return
  const patch:RuleBatchPatch={}
- for(const key of ['node_id','egress_node_id','balance','proxy_accept_enabled','proxy_send_enabled'] as const){
+ for(const key of ['node_id','ingress_group_id','egress_node_id','balance','proxy_accept_enabled','proxy_send_enabled'] as const){
   const value=form[key]
   if(value!==undefined&&value!==null&&value!=='')Object.assign(patch,{[key]:value})
  }
@@ -42,8 +43,8 @@ function submit(){
   <p class="subtle">留空保持原值。保存后由节点同步生效，受影响的现有连接可能断开。</p>
   <el-form label-position="top" :disabled="busy" @submit.prevent="submit">
    <el-form-item label="入口（留空不更新）">
-    <el-select v-model="form.node_id" clearable @clear="clearField('node_id')" placeholder="保持原入口" :disabled="hasSharedTLS" data-testid="batch-rule-ingress">
-     <el-option v-for="n in ingressNodes" :key="n.id" :label="n.name" :value="n.id"/>
+    <el-select v-model="ingressChoice" clearable placeholder="保持原入口" :disabled="hasSharedTLS" data-testid="batch-rule-ingress">
+     <el-option-group v-if="nodeGroups?.length" label="节点组"><el-option v-for="g in nodeGroups" :key="g.id" :label="g.name+' · 节点组'" :value="'g:'+g.id" :disabled="!g.node_ids.length"/></el-option-group><el-option-group label="单节点"><el-option v-for="n in ingressNodes" :key="n.id" :label="n.name" :value="'n:'+n.id"/></el-option-group>
     </el-select>
     <span class="field-tip">{{hasSharedTLS?'共享 TLS 规则切换入口时，请逐条选择新节点的共享 TLS 入口。':'更换入口会重新分配监听端口；选择原入口时保留端口。'}}</span>
    </el-form-item>

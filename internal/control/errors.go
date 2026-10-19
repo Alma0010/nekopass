@@ -14,6 +14,9 @@ func publicOperationError(err error) string {
 	var connectError *pgconn.ConnectError
 	var parseError *pgconn.ParseConfigError
 	var networkError net.Error
+	if errors.As(err, &sqlError) && sqlError.ConstraintName == "rule_ports_pkey" {
+		return "监听端口已被入口节点上的其他规则或共享 TLS 入站占用"
+	}
 	if errors.As(err, &sqlError) && sqlError.ConstraintName == "rule_sni_names_pkey" {
 		return "此 SNI 已被其他规则占用（暂停规则仍保留 SNI）"
 	}

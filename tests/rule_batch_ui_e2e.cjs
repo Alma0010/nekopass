@@ -36,7 +36,7 @@ const rules=[1,2,3,4].map(id=>({id,user_id:2,node_id:10,node_name:'入口一',eg
     else if(api==='profile'||api==='admin/users/2')data=[profile];
     else if(api==='rules'||api==='admin/users/2/rules')data=rules;
     else if(api==='rule-nodes'||api==='admin/users/2/rule-nodes')data=nodes;
-    else if(api.endsWith('rule-groups')||api.endsWith('tls-inbounds'))data=[];
+    else if(api.endsWith('rule-groups')||api.endsWith('tls-inbounds')||api.endsWith('rule-node-groups'))data=[];
     else if(api==='site')data={name:'Nekopass',site_name:'Nekopass'};
     await route.fulfill({json:data});
    });
