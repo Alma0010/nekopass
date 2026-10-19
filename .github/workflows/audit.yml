@@ -23,6 +23,7 @@ jobs:
           mkdir -p .local
           python3 -m unittest discover -s tests -p public_guard_test.py
           python3 -m unittest discover -s tests -p installer_prompt_test.py
+          python3 -m unittest discover -s tests -p installer_url_test.py
           python3 -m unittest discover -s tests -p uninstaller_test.py
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:

@@ -235,8 +235,8 @@ PY_COMPARE_ENDPOINTS
 fi
 FILE="nekopass-agent-linux-$ARCH"
 if [[ -z "$BINARY_URL" ]]; then
- if [[ "$VERSION" == latest && "$DOWNLOAD_BASE" == https://github.com/Alma0010/nekopass/releases/download ]]; then
-  BINARY_URL="https://github.com/Alma0010/nekopass/releases/latest/download/$FILE"
+ if [[ "$VERSION" == latest && ( "$DOWNLOAD_BASE" == https://github.com/*/releases/download || "$DOWNLOAD_BASE" == https://*/https://github.com/*/releases/download ) ]]; then
+  BINARY_URL="${DOWNLOAD_BASE%/releases/download}/releases/latest/download/$FILE"
  else BINARY_URL="$DOWNLOAD_BASE/$VERSION/$FILE"; fi
 fi
 

@@ -22,6 +22,16 @@
 | 版本下载根地址 | `https://github.com/Alma0010/nekopass/releases/download` |
 | Agent 版本 | `latest`（最新正式版，也可填写版本号） |
 
+使用 GitHub 下载代理时，可在上述两个地址前都加上代理前缀。例如：
+
+| 设置 | 代理地址示例 |
+| --- | --- |
+| 安装脚本地址 | `https://v4.gh-proxy.org/https://github.com/Alma0010/nekopass/releases/latest/download/install-agent.sh` |
+| 版本下载根地址 | `https://v4.gh-proxy.org/https://github.com/Alma0010/nekopass/releases/download` |
+| Agent 版本 | `latest` 或明确版本号，例如 `v0.19.1` |
+
+需要使用包含代理 `latest` 修复的新版安装脚本。旧版安装脚本搭配代理时，请明确填写已发布的版本号。普通 OSS 下载目录继续使用其原有的版本目录结构。
+
 节点连接信息由安装参数写入 `/etc/nekopass/agent.env`，只需 `NEKOPASS_SERVER` 和 `NEKOPASS_NODE_TOKEN`。规则、限速等运行配置通过 gRPC 下发；节点无需连接网页端口。
 
 ## 密钥与连接
