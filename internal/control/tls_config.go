@@ -9,6 +9,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"fmt"
+	"github.com/nekopass/nekopass/internal/padding"
 	"math/big"
 	"net"
 	"net/url"
@@ -18,6 +20,8 @@ import (
 )
 
 type TunnelTLSConfig struct {
+	PaddingEnabled      bool              `json:"padding_enabled"`
+	PaddingScheme       []string          `json:"padding_scheme"`
 	ServerName          string            `json:"server_name"`
 	ClientSNI           string            `json:"client_sni"`
 	Fingerprint         string            `json:"fingerprint"`
@@ -49,6 +53,12 @@ func DefaultTunnelTLS() TunnelTLSConfig {
 }
 
 func (v *TunnelTLSConfig) normalize() error {
+	if v.PaddingEnabled && len(v.PaddingScheme) == 0 {
+		v.PaddingScheme = padding.Defaults()
+	}
+	if _, err := padding.Parse(v.PaddingScheme); err != nil {
+		return fmt.Errorf("Padding policy: %w", err)
+	}
 	d := DefaultTunnelTLS()
 	if v.Fingerprint == "" {
 		v.Fingerprint = d.Fingerprint

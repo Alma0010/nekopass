@@ -16,13 +16,17 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/nekopass/nekopass/internal/padding"
 	pb "github.com/nekopass/nekopass/internal/protocol"
 	"github.com/nekopass/nekopass/internal/tunnel"
+	"strings"
 )
 
 type udpStreamOpen struct {
 	h2Open
-	Time int64 `json:"time"`
+	Time           int64 `json:"time"`
+	Padding        bool  `json:"padding,omitempty"`
+	PaddingVersion int   `json:"padding_version,omitempty"`
 }
 
 func dialRawDatagramTunnel(ctx context.Context, r *pb.Rule, target string) (net.Conn, error) {
@@ -59,9 +63,16 @@ func dialRawDatagramTunnel(ctx context.Context, r *pb.Rule, target string) (net.
 			c.Close()
 		}
 	}()
+	scheme, err := rulePadding(r)
+	if err != nil {
+		return nil, err
+	}
 	var nonce [16]byte
 	rand.Read(nonce[:])
-	open := udpStreamOpen{h2Open: h2Open{Network: "udp", Ingress: r.IngressNodeId, Rule: r.Id, User: r.UserId, Epoch: r.QuotaEpoch, Target: target, Nonce: hex.EncodeToString(nonce[:])}, Time: time.Now().Unix()}
+	open := udpStreamOpen{h2Open: h2Open{Network: "udp", Ingress: r.IngressNodeId, Rule: r.Id, User: r.UserId, Epoch: r.QuotaEpoch, Target: target, Nonce: hex.EncodeToString(nonce[:])}, Time: time.Now().Unix(), Padding: scheme != nil}
+	if scheme != nil {
+		open.PaddingVersion = padding.WireVersion
+	}
 	metadata, _ := json.Marshal(open)
 	host := net.JoinHostPort(r.TunnelHost, strconv.Itoa(int(r.TunnelPort)))
 	path := "/api/stream"
@@ -76,6 +87,13 @@ func dialRawDatagramTunnel(ctx context.Context, r *pb.Rule, target string) (net.
 	request, _ := http.NewRequest("POST", "http://"+host+path, nil)
 	request.Header.Set("X-Stream", base64.RawURLEncoding.EncodeToString(metadata))
 	request.Header.Set("Authorization", "Bearer "+h2Proof(r.TunnelToken, binding, metadata))
+	if scheme != nil {
+		size, err := scheme.AuthSize()
+		if err != nil {
+			return nil, err
+		}
+		request.Header.Set("X-Stream-Padding", strings.Repeat("0", size))
+	}
 	if deadline, ok := ctx.Deadline(); ok {
 		c.SetDeadline(deadline)
 	} else {
@@ -93,9 +111,16 @@ func dialRawDatagramTunnel(ctx context.Context, r *pb.Rule, target string) (net.
 	if response.StatusCode != 200 || !hmac.Equal([]byte(response.Header.Get("X-Stream-Reply")), []byte(h2ResponseProof(r.TunnelToken, binding, metadata))) {
 		return nil, errors.New("UDP tunnel authentication refused")
 	}
+	if scheme != nil && response.Header.Get("X-Stream-Padding-Version") != strconv.Itoa(padding.WireVersion) {
+		return nil, errors.New("UDP tunnel padding version mismatch")
+	}
 	c.SetDeadline(time.Time{})
 	success = true
-	return &framedDatagram{Conn: &bufferedConn{Conn: c, reader: reader}}, nil
+	var peer net.Conn = &bufferedConn{Conn: c, reader: reader}
+	if scheme != nil {
+		peer = padding.NewConn(peer, scheme)
+	}
+	return &framedDatagram{Conn: peer}, nil
 }
 
 func (e *Engine) handleUDPStream(ctx context.Context, c net.Conn, reader *bufio.Reader) {
@@ -134,6 +159,11 @@ func (e *Engine) handleUDPStream(ctx context.Context, c net.Conn, reader *bufio.
 		e.serveRawCamouflage(ctx, c, reader, request)
 		return
 	}
+	scheme, paddingErr := nodePadding(node)
+	if paddingErr != nil || open.Padding != (scheme != nil) || scheme != nil && (open.PaddingVersion != padding.WireVersion || !scheme.ValidAuth(len(request.Header.Get("X-Stream-Padding")))) || scheme == nil && open.PaddingVersion != 0 {
+		e.serveRawCamouflage(ctx, c, reader, request)
+		return
+	}
 	dialCtx, cancelDial := context.WithTimeout(ctx, policy.dialTimeout)
 	target, err := e.dialTarget(dialCtx, "udp", open.Target)
 	cancelDial()
@@ -148,11 +178,19 @@ func (e *Engine) handleUDPStream(ctx context.Context, c net.Conn, reader *bufio.
 	if !allowed() {
 		return
 	}
-	if _, err = c.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nX-Stream-Reply: " + h2ResponseProof(key, binding, metadata) + "\r\n\r\n")); err != nil {
+	paddingHeader := ""
+	if scheme != nil {
+		paddingHeader = "X-Stream-Padding-Version: " + strconv.Itoa(padding.WireVersion) + "\r\n"
+	}
+	if _, err = c.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nX-Stream-Reply: " + h2ResponseProof(key, binding, metadata) + "\r\n" + paddingHeader + "\r\n")); err != nil {
 		return
 	}
 	c.SetDeadline(time.Time{})
-	e.relayDatagrams(ctx, &framedDatagram{Conn: &bufferedConn{Conn: c, reader: reader}}, target, allowed)
+	var peer net.Conn = &bufferedConn{Conn: c, reader: reader}
+	if scheme != nil {
+		peer = padding.NewConn(peer, scheme)
+	}
+	e.relayDatagrams(ctx, &framedDatagram{Conn: peer}, target, allowed)
 }
 
 type boundedHeaderReader struct {

@@ -230,6 +230,8 @@ message TLSClientConfig {
  string host = 8;
  bool require_response_proof = 9;
  bool sequence_auth = 10;
+ bool padding_enabled = 11;
+ repeated string padding_scheme = 12;
 }
 message TLSServerConfig {
  string server_name = 1;
@@ -244,6 +246,8 @@ message TLSServerConfig {
  string site_title = 10;
  string host = 11;
  string fallback_url = 12;
+ bool padding_enabled = 13;
+ repeated string padding_scheme = 14;
 }
 message ACMEChallenge {
  string domain = 1;

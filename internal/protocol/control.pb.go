@@ -2324,6 +2324,8 @@ type TLSClientConfig struct {
 	Host                 string                 `protobuf:"bytes,8,opt,name=host,proto3" json:"host,omitempty"`
 	RequireResponseProof bool                   `protobuf:"varint,9,opt,name=require_response_proof,json=requireResponseProof,proto3" json:"require_response_proof,omitempty"`
 	SequenceAuth         bool                   `protobuf:"varint,10,opt,name=sequence_auth,json=sequenceAuth,proto3" json:"sequence_auth,omitempty"`
+	PaddingEnabled       bool                   `protobuf:"varint,11,opt,name=padding_enabled,json=paddingEnabled,proto3" json:"padding_enabled,omitempty"`
+	PaddingScheme        []string               `protobuf:"bytes,12,rep,name=padding_scheme,json=paddingScheme,proto3" json:"padding_scheme,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -2428,6 +2430,20 @@ func (x *TLSClientConfig) GetSequenceAuth() bool {
 	return false
 }
 
+func (x *TLSClientConfig) GetPaddingEnabled() bool {
+	if x != nil {
+		return x.PaddingEnabled
+	}
+	return false
+}
+
+func (x *TLSClientConfig) GetPaddingScheme() []string {
+	if x != nil {
+		return x.PaddingScheme
+	}
+	return nil
+}
+
 type TLSServerConfig struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	ServerName          string                 `protobuf:"bytes,1,opt,name=server_name,json=serverName,proto3" json:"server_name,omitempty"`
@@ -2442,6 +2458,8 @@ type TLSServerConfig struct {
 	SiteTitle           string                 `protobuf:"bytes,10,opt,name=site_title,json=siteTitle,proto3" json:"site_title,omitempty"`
 	Host                string                 `protobuf:"bytes,11,opt,name=host,proto3" json:"host,omitempty"`
 	FallbackUrl         string                 `protobuf:"bytes,12,opt,name=fallback_url,json=fallbackUrl,proto3" json:"fallback_url,omitempty"`
+	PaddingEnabled      bool                   `protobuf:"varint,13,opt,name=padding_enabled,json=paddingEnabled,proto3" json:"padding_enabled,omitempty"`
+	PaddingScheme       []string               `protobuf:"bytes,14,rep,name=padding_scheme,json=paddingScheme,proto3" json:"padding_scheme,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -2558,6 +2576,20 @@ func (x *TLSServerConfig) GetFallbackUrl() string {
 		return x.FallbackUrl
 	}
 	return ""
+}
+
+func (x *TLSServerConfig) GetPaddingEnabled() bool {
+	if x != nil {
+		return x.PaddingEnabled
+	}
+	return false
+}
+
+func (x *TLSServerConfig) GetPaddingScheme() []string {
+	if x != nil {
+		return x.PaddingScheme
+	}
+	return nil
 }
 
 type ACMEChallenge struct {
@@ -3095,7 +3127,7 @@ const file_api_control_proto_rawDesc = "" +
 	"\fupdated_unix\x18\x06 \x01(\x03R\vupdatedUnix\x12\x14\n" +
 	"\x05error\x18\a \x01(\tR\x05error\x12#\n" +
 	"\robserved_ipv4\x18\b \x01(\tR\fobservedIpv4\x12#\n" +
-	"\robserved_ipv6\x18\t \x01(\tR\fobservedIpv6\"\xed\x02\n" +
+	"\robserved_ipv6\x18\t \x01(\tR\fobservedIpv6\"\xbd\x03\n" +
 	"\x0fTLSClientConfig\x12\x1f\n" +
 	"\vserver_name\x18\x01 \x01(\tR\n" +
 	"serverName\x12 \n" +
@@ -3108,7 +3140,9 @@ const file_api_control_proto_rawDesc = "" +
 	"\x04host\x18\b \x01(\tR\x04host\x124\n" +
 	"\x16require_response_proof\x18\t \x01(\bR\x14requireResponseProof\x12#\n" +
 	"\rsequence_auth\x18\n" +
-	" \x01(\bR\fsequenceAuth\"\xc3\x03\n" +
+	" \x01(\bR\fsequenceAuth\x12'\n" +
+	"\x0fpadding_enabled\x18\v \x01(\bR\x0epaddingEnabled\x12%\n" +
+	"\x0epadding_scheme\x18\f \x03(\tR\rpaddingScheme\"\x93\x04\n" +
 	"\x0fTLSServerConfig\x12\x1f\n" +
 	"\vserver_name\x18\x01 \x01(\tR\n" +
 	"serverName\x12 \n" +
@@ -3128,7 +3162,9 @@ const file_api_control_proto_rawDesc = "" +
 	"site_title\x18\n" +
 	" \x01(\tR\tsiteTitle\x12\x12\n" +
 	"\x04host\x18\v \x01(\tR\x04host\x12!\n" +
-	"\ffallback_url\x18\f \x01(\tR\vfallbackUrl\"\xa9\x01\n" +
+	"\ffallback_url\x18\f \x01(\tR\vfallbackUrl\x12'\n" +
+	"\x0fpadding_enabled\x18\r \x01(\bR\x0epaddingEnabled\x12%\n" +
+	"\x0epadding_scheme\x18\x0e \x03(\tR\rpaddingScheme\"\xa9\x01\n" +
 	"\rACMEChallenge\x12\x16\n" +
 	"\x06domain\x18\x01 \x01(\tR\x06domain\x12\x14\n" +
 	"\x05token\x18\x02 \x01(\tR\x05token\x12+\n" +

@@ -428,6 +428,9 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 			if rule.Protocol != "tcp" && version < 16 {
 				rule.Enabled = false
 			}
+			if rule.TunnelProtocol == "tls_tcp" && rule.Tls.GetPaddingEnabled() && (r.ProtocolVersion < 23 || version < 23) {
+				rule.Enabled = false
+			}
 			if rule.Tls != nil {
 				rule.Tls.SequenceAuth = r.ProtocolVersion >= 14 && version >= 14
 			}
@@ -438,6 +441,9 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 				rule.Enabled = false
 			}
 		}
+	}
+	if out.Node.TunnelProtocol == "tls_tcp" && out.Node.Tls.GetPaddingEnabled() && r.ProtocolVersion < 23 {
+		out.Node.TunnelExitEnabled = false
 	}
 	if out.Node.TunnelExitEnabled && tunnel.UDP(out.Node.TunnelProtocol) && r.ProtocolVersion < int32(tunnel.MinimumVersion(out.Node.TunnelProtocol)) {
 		out.Node.TunnelExitEnabled = false

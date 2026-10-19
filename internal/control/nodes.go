@@ -347,6 +347,12 @@ func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {
 	if !validID {
 		return
 	}
+	forceValue := r.URL.Query().Get("force")
+	if forceValue != "" && forceValue != "true" && forceValue != "false" {
+		fail(w, 400, "force 参数须为 true 或 false")
+		return
+	}
+	force := forceValue == "true"
 	ctx := r.Context()
 	tx, e := s.ruleTx(ctx)
 	if e != nil {
@@ -358,13 +364,43 @@ func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {
 		s.dbError(w, e)
 		return
 	}
-	tag, e := tx.Exec(ctx, `DELETE FROM nodes WHERE id=$1 AND NOT enabled AND (last_seen IS NULL OR applied_revision>=config_revision) AND NOT EXISTS(SELECT 1 FROM rules WHERE node_id=$1) AND NOT EXISTS(SELECT 1 FROM grants WHERE node_id=$1) AND NOT EXISTS(SELECT 1 FROM rule_usage WHERE node_id=$1)`, id)
+	var enabled, online, synchronized, hasRules, hasLedger bool
+	e = tx.QueryRow(ctx, `SELECT enabled,COALESCE(last_seen>now()-interval '12 seconds',false),applied_revision>=config_revision,
+ EXISTS(SELECT 1 FROM rules WHERE node_id=$1 OR egress_node_id=$1),
+ EXISTS(SELECT 1 FROM grants WHERE node_id=$1) OR EXISTS(SELECT 1 FROM rule_usage WHERE node_id=$1)
+ FROM nodes WHERE id=$1 FOR UPDATE`, id).Scan(&enabled, &online, &synchronized, &hasRules, &hasLedger)
+	if errors.Is(e, pgx.ErrNoRows) {
+		fail(w, 404, "节点不存在")
+		return
+	}
 	if e != nil {
 		s.dbError(w, e)
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		fail(w, 409, "请先停用节点并等待配置同步；存在规则或用量账本的节点需保留记录，不能删除")
+	if enabled {
+		fail(w, 409, "请先停用节点，再执行删除")
+		return
+	}
+	if hasRules {
+		fail(w, 409, "此节点仍被转发规则用作入口或出口，请先迁移或删除相关规则")
+		return
+	}
+	if online && !synchronized {
+		fail(w, 409, "节点仍在线，请等待停用配置同步后再删除")
+		return
+	}
+	if hasLedger && !force {
+		writeJSON(w, 409, map[string]any{"error": "此节点有历史用量或额度授权，请二次确认强制删除；已用流量和未归还额度会保留", "code": "node_delete_confirmation_required"})
+		return
+	}
+	if hasLedger {
+		if e = archiveNodeAccounting(ctx, tx, id, current(r).ID); e != nil {
+			s.dbError(w, e)
+			return
+		}
+	}
+	if _, e = tx.Exec(ctx, "DELETE FROM nodes WHERE id=$1", id); e != nil {
+		s.dbError(w, e)
 		return
 	}
 	if e = finishRules(ctx, tx); e != nil {
@@ -372,6 +408,30 @@ func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func archiveNodeAccounting(ctx context.Context, tx pgx.Tx, node, actor int64) error {
+	// The node row lock serializes this snapshot with the last Agent report.
+	// Keep issued/released/spent/traffic unchanged: deleting a host must not
+	// make existing usage or unreturned quota grants available to spend again.
+	statements := []string{
+		"INSERT INTO deleted_nodes(id,name,deleted_by) SELECT id,name,$2 FROM nodes WHERE id=$1",
+		"INSERT INTO deleted_node_grants SELECT * FROM grants WHERE node_id=$1",
+		"UPDATE deleted_node_grants SET unlimited_open=false WHERE node_id=$1",
+		"INSERT INTO deleted_node_rule_usage SELECT * FROM rule_usage WHERE node_id=$1",
+		"DELETE FROM grants WHERE node_id=$1",
+		"DELETE FROM rule_usage WHERE node_id=$1",
+	}
+	for i, statement := range statements {
+		args := []any{node}
+		if i == 0 {
+			args = append(args, actor)
+		}
+		if _, err := tx.Exec(ctx, statement, args...); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Earlier releases stored only a hash. A successful node authentication lets us

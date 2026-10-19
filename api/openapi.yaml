@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.18.4
+  version: 0.18.5
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Administrator-created accounts or optional email-verified registration. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -1080,10 +1080,18 @@ paths:
         '200': {description: Updated}
         '409': {$ref: '#/components/responses/Error'}
     delete:
-      summary: Admin deletes unused resource; referenced resources must be disabled instead
+      summary: Admin deletes a disabled node without active rule references; offline nodes do not wait for synchronization
+      parameters:
+        - in: query
+          name: force
+          schema: {type: boolean, default: false}
+          description: Explicit second confirmation for nodes with usage history. Preserves archived usage and outstanding quota allocations while physically deleting the node and its credentials. Does not bypass active rules, enabled state or online pending synchronization.
       responses:
         '200': {description: Deleted}
-        '409': {$ref: '#/components/responses/Error'}
+        '400': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {description: 'Node must be disabled, still has rules, is online awaiting disable synchronization, or requires explicit force=true. In the last case the JSON code is node_delete_confirmation_required.'}
   /admin/nodes:
     get:
       summary: Admin lists nodes, including the saved per-node token; legacy hash-only nodes show empty until they connect or are edited
@@ -1554,6 +1562,8 @@ components:
       additionalProperties: false
       description: Administrator-only exit TLS protocol settings. Connection options are supplied to ingress nodes for this exit; DNS credentials and private keys are not forwarded.
       properties:
+        padding_enabled: {type: boolean, default: false, description: 'Effective only for raw_tcp + tls; requires both agents to support protocol 22. Other combinations retain but ignore it.'}
+        padding_scheme: {type: array, nullable: true, maxItems: 65, items: {type: string}, description: 'AnyTLS-style lines: stop=N, 0=min-max, index=min-max,c,min-max. Empty uses the default policy. Stop 0-64; auth padding 1-2048; other sizes 1-16384; maximum 16 fragments per line and 8192 text bytes.'}
         server_name: {type: string, description: Exit certificate domain and default SNI}
         client_sni: {type: string, description: Optional SNI used by all ingress connections to this exit; certificate names remain verified}
         fingerprint: {type: string, enum: ['off', chrome, firefox], default: 'off', description: 'off uses standard verified TLS; browser profiles use uTLS'}

@@ -81,7 +81,12 @@ func prepareNodeTLS(ctx context.Context, tx pgx.Tx, id int64, input *NodeInput) 
 					return errors.New("DNS 自动申请须填写服务商凭据")
 				}
 			}
-			if !reflect.DeepEqual(cfg, old) || cert == "" || expiry == nil || time.Until(*expiry) < 30*24*time.Hour {
+			certificateConfig, oldCertificateConfig := cfg, old
+			certificateConfig.PaddingEnabled = false
+			certificateConfig.PaddingScheme = nil
+			oldCertificateConfig.PaddingEnabled = false
+			oldCertificateConfig.PaddingScheme = nil
+			if !reflect.DeepEqual(certificateConfig, oldCertificateConfig) || cert == "" || expiry == nil || time.Until(*expiry) < 30*24*time.Hour {
 				status = "pending"
 			}
 		}
@@ -110,7 +115,7 @@ func appendTLSControl(ctx context.Context, tx pgx.Tx, nodeID int64, out *pb.Cont
 	if err := client.normalize(); err != nil {
 		return err
 	}
-	out.Node.Tls = &pb.TLSServerConfig{ServerName: client.ServerName, Certificate: cert, PrivateKey: key, Path: client.Path,
+	out.Node.Tls = &pb.TLSServerConfig{PaddingEnabled: out.Node.TunnelProtocol == "tls_tcp" && client.PaddingEnabled, PaddingScheme: client.PaddingScheme, ServerName: client.ServerName, Certificate: cert, PrivateKey: key, Path: client.Path,
 		StreamWindowMib: int32(client.StreamWindowMiB), ConnectionWindowMib: int32(client.ConnectionWindowMiB), MaxStreams: int32(client.MaxStreams), ChallengePort: int32(client.HTTPChallengePort), SiteTitle: client.SiteTitle, Host: client.Host, FallbackUrl: client.FallbackURL}
 	if !tunnel.TLS(out.Node.TunnelProtocol) {
 		out.Node.Tls.Certificate = ""
@@ -172,7 +177,7 @@ func appendTLSControl(ctx context.Context, tx pgx.Tx, nodeID int64, out *pb.Cont
 			}
 			// Transport options belong to the selected exit. A dual-role node's
 			// own exit configuration must not affect its connections to other exits.
-			settings = &pb.TLSClientConfig{ServerName: sni, Fingerprint: exit.Fingerprint, RootCa: root, Path: exit.Path, Host: host, RequireResponseProof: true, PoolSize: int32(exit.PoolSize), StreamWindowMib: int32(exit.StreamWindowMiB), ConnectionWindowMib: int32(exit.ConnectionWindowMiB)}
+			settings = &pb.TLSClientConfig{PaddingEnabled: rule.TunnelProtocol == "tls_tcp" && exit.PaddingEnabled, PaddingScheme: exit.PaddingScheme, ServerName: sni, Fingerprint: exit.Fingerprint, RootCa: root, Path: exit.Path, Host: host, RequireResponseProof: true, PoolSize: int32(exit.PoolSize), StreamWindowMib: int32(exit.StreamWindowMiB), ConnectionWindowMib: int32(exit.ConnectionWindowMiB)}
 			if !tunnel.TLS(rule.TunnelProtocol) {
 				settings.RootCa = ""
 				settings.ServerName = ""

@@ -339,7 +339,7 @@ func (s *Server) rules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, e := s.Pool.Query(r.Context(), `SELECT r.id,r.user_id,r.node_id,COALESCE(r.egress_node_id,0) AS egress_node_id,COALESCE(en.name,'') AS egress_node_name,COALESCE(en.tunnel_protocol,'') AS egress_tunnel_protocol,r.protocol,r.listen_host,COALESCE(ti.port,r.listen_port) AS listen_port,COALESCE(r.tls_inbound_id,0) AS tls_inbound_id,r.sni_names,r.tls_alpn,r.origin_tls,r.target_host,r.target_port,r.enabled,r.name,r.group_id,r.targets,r.balance,r.proxy_accept,r.proxy_send,r.proxy_trusted_cidrs,r.traffic_baseline,r.config_revision,u.rule_speed_bps/125000 AS speed_mbps,u.rule_ip_limit AS ip_limit,u.rule_connection_limit AS connection_limit,u.username,n.name AS node_name,n.public_address,n.last_seen,n.sync_error,n.applied_revision,
- COALESCE(g.name,'') AS group_name,GREATEST(COALESCE((SELECT sum(t.traffic) FROM rule_usage t WHERE t.rule_id=r.id),0)::bigint-r.traffic_baseline,0) AS traffic_bytes,
+ COALESCE(g.name,'') AS group_name,GREATEST(COALESCE((SELECT sum(t.traffic) FROM all_rule_usage t WHERE t.rule_id=r.id),0)::bigint-r.traffic_baseline,0) AS traffic_bytes,
  CASE WHEN NOT r.enabled THEN 'disabled' WHEN NOT u.account_enabled THEN 'user_disabled' WHEN u.plan_id IS NULL THEN 'no_plan' WHEN NOT u.plan_enabled THEN 'plan_disabled' WHEN u.expires_at<=now() THEN 'expired' WHEN NOT n.ingress_enabled OR NOT EXISTS(SELECT 1 FROM user_nodes un WHERE un.user_id=r.user_id AND un.node_id=r.node_id) OR (r.egress_node_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM user_nodes un WHERE un.user_id=r.user_id AND un.node_id=r.egress_node_id)) THEN 'unauthorized'
  WHEN u.quota_bytes>=0 AND (u.quota_bytes<=u.traffic_base_bytes+COALESCE((SELECT sum(traffic) FROM current_grants WHERE user_id=u.id),0) OR u.quota_bytes<u.traffic_base_bytes+COALESCE((SELECT sum(issued-released+unlimited_spent) FROM current_grants WHERE user_id=u.id),0)) THEN 'quota_exhausted'
 	 WHEN n.last_seen IS NULL OR n.last_seen<now()-interval '12 seconds' OR (en.id IS NOT NULL AND (en.last_seen IS NULL OR en.last_seen<now()-interval '12 seconds')) THEN 'offline'
@@ -348,6 +348,7 @@ func (s *Server) rules(w http.ResponseWriter, r *http.Request) {
  WHEN r.tls_inbound_id IS NULL AND n.tls_inbound_only AND r.protocol='tcp' THEN 'tls_required'
  WHEN r.tls_inbound_id IS NOT NULL AND ti.config->>'enabled'<>'true' THEN 'inbound_disabled'
  WHEN (r.proxy_accept<>'off' OR ti.config->>'proxy_accept'='auto') AND $4 THEN 'proxy_untrusted'
+ WHEN en.tunnel_protocol='tls_tcp' AND en.tls_config->>'padding_enabled'='true' AND (n.protocol_version<23 OR en.protocol_version<23) THEN 'upgrade_required'
  WHEN en.tunnel_protocol IN ('plain_udp','dtls_udp') AND (n.protocol_version<17 OR en.protocol_version<17) THEN 'upgrade_required'
  WHEN r.protocol<>'tcp' AND (n.protocol_version<16 OR (en.id IS NOT NULL AND en.protocol_version<16)) THEN 'upgrade_required'
  WHEN r.proxy_accept='auto' AND n.protocol_version<10 THEN 'upgrade_required'
@@ -446,7 +447,7 @@ func (s *Server) applyBatch(w http.ResponseWriter, r *http.Request, in BatchInpu
 	case "enable", "disable":
 		_, e = tx.Exec(ctx, "UPDATE rules SET enabled=$2,config_revision=(SELECT value+1 FROM revision WHERE id=1) WHERE id=ANY($1)", in.IDs, in.Action == "enable")
 	case "clear":
-		_, e = tx.Exec(ctx, "UPDATE rules r SET traffic_baseline=COALESCE((SELECT sum(traffic) FROM rule_usage WHERE rule_id=r.id),0) WHERE id=ANY($1)", in.IDs)
+		_, e = tx.Exec(ctx, "UPDATE rules r SET traffic_baseline=COALESCE((SELECT sum(traffic) FROM all_rule_usage WHERE rule_id=r.id),0) WHERE id=ANY($1)", in.IDs)
 	case "group":
 		if in.GroupID != 0 {
 			var n int

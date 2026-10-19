@@ -2,7 +2,7 @@ export type RuleBatchPatch={node_id?:number;egress_node_id?:number;balance?:stri
 export type OriginTLS={enabled:boolean;server_name:string;root_ca:string;alpn:string[]}
 export type SharedTLSConfig={name:string;port:number;enabled:boolean;proxy_accept:string;allowed_sni:string[];reject_empty_sni:boolean;unknown_sni_action:string;default_rule_id:number;max_handshakes:number;handshake_timeout_seconds:number}
 export type TLSInboundChoice={id:number;node_id:number;port:number;name:string;allowed_sni:string[]}
-export type TunnelTLS = {server_name:string;client_sni:string;fingerprint:string;host:string;fallback_url:string;certificate_mode:string;certificate:string;private_key:string;root_ca:string;path:string;public_port:number;pool_size:number;stream_window_mib:number;connection_window_mib:number;max_streams:number;site_title:string;acme_email:string;acme_directory:string;acme_root_ca:string;http_challenge_port:number;dns_provider:string;dns_credentials:Record<string,string>}
+export type TunnelTLS = {padding_enabled:boolean;padding_scheme:string[];server_name:string;client_sni:string;fingerprint:string;host:string;fallback_url:string;certificate_mode:string;certificate:string;private_key:string;root_ca:string;path:string;public_port:number;pool_size:number;stream_window_mib:number;connection_window_mib:number;max_streams:number;site_title:string;acme_email:string;acme_directory:string;acme_root_ca:string;http_challenge_port:number;dns_provider:string;dns_credentials:Record<string,string>}
 export type Me = { id: number; username: string; is_admin: boolean }
 export type User = { referral_enabled?: boolean|null; referral_mode?:string; referral_rate_bps?:number|null; resources_revision: number; node_group_ids: number[]; id: number; username: string; is_admin: boolean; enabled: boolean; plan_id: number | null; plan_name: string; plan_enabled: boolean; plan_started_at: string; next_reset_at: string | null; quota_epoch: number; subscription_managed: boolean; balance_cents: number; expires_at: string | null; speed_mbps: number; quota_bytes: number; max_rules: number; max_connections: number; ip_limit: number; rule_speed_mbps: number; rule_ip_limit: number; rule_connection_limit: number; node_ids: number[]; rule_count: number; traffic_bytes: number; charged_bytes: number; allocated_bytes: number }
 export type NodeInput = { udp_idle_timeout_seconds?:number; tls: TunnelTLS; token: string; ingress_enabled: boolean; allow_direct: boolean; tunnel_exit_enabled: boolean; tunnel_protocol: string; tunnel_transport: string; tunnel_security: string; tunnel_listen_host: string; tunnel_listen_port: number; tunnel_public_host: string; allowed_ingress_ids: number[]; name: string; public_address: string; notes: string; enabled: boolean; group_ids: number[]; listen_host: string; port_min: number; port_max: number; max_connections: number; dial_timeout_seconds: number; idle_timeout_seconds: number; probe_interval_seconds: number; disk_path: string; network_interfaces: string[] }
@@ -16,12 +16,15 @@ export type ProbeNode = { id: number; name: string; group_id: number; group_name
 export type RuleInput = { tls_inbound_id?:number;sni_names?:string[];tls_alpn?:string[];origin_tls?:OriginTLS; protocol?: 'tcp'|'udp'; egress_node_id: number; user_id: number; node_id: number; name: string; group_id: number; listen_port: number; targets: string[]; balance: string; speed_mbps: number; ip_limit: number; connection_limit: number; proxy_accept: string; proxy_send: string; proxy_trusted_cidrs: string[]; enabled: boolean }
 export type Rule = RuleInput & { egress_node_name: string; egress_tunnel_protocol?: string; id: number; username: string; node_name: string; public_address: string; traffic_bytes: number; status: string; sync_error: string; group_name: string; last_seen: string | null; applied_revision: number }
 export type Group = { id: number; user_id: number; name: string; rule_count: number }
+export class APIError extends Error {
+  constructor(message:string,readonly status:number,readonly code:string=''){super(message);this.name='APIError'}
+}
 export async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   const r = await fetch(`/api/v1/${path}`, { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
   const data = await r.json()
   if (!r.ok) {
     if (r.status === 401 && location.pathname !== '/login') location.assign('/login?next=' + encodeURIComponent(location.pathname + location.search))
-    throw new Error(data.error || `请求失败 (${r.status})`)
+    throw new APIError(data.error || `请求失败 (${r.status})`,r.status,typeof data.code==='string'?data.code:'')
   }
   return data
 }
