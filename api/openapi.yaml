@@ -369,7 +369,7 @@ paths:
               properties:
                 version: {type: string, example: v0.10.0}
       responses:
-        '200': {description: 'generation, version and queued state; Agent protocol 9 and installed updater required. Update progress appears in admin nodes only. Uses fixed Alma0010/nekopass Releases; preserves node identity and quota state.'}
+        '200': {description: 'generation, version and queued state; Agent protocol 9 and installed updater required. Update progress appears in admin nodes only. Targets Alma0010/nekopass stable Releases and uses the configured Agent release download base when both Agent and updater support it; legacy custom-source updates require reinstalling the new Agent installer. Preserves node identity and quota state.'}
         '403': {$ref: '#/components/responses/Error'}
         '409': {description: Offline/legacy node, pending task or version conflict}
   /admin/nodes/{id}/protocols:

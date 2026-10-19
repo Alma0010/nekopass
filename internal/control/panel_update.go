@@ -44,10 +44,13 @@ func (s *Server) currentPanelUpdate() *panelUpdateTask {
 	if readUpdateFile(filepath.Join(s.panelUpdateDir, "update-result.json"), &result) && result.Generation == task.Generation && result.Version == task.Version && (result.State == "running" || result.State == "completed" || result.State == "failed") {
 		task.State = result.State
 		task.Error = result.Error
-		if task.State == "completed" && release.Version != task.Version {
+		if task.State == "completed" && !release.AtLeast(release.Version, task.Version) {
 			task.State = "failed"
 			task.Error = "更新后版本不匹配，请查看面板更新服务日志"
 		}
+	}
+	if release.AtLeast(release.Version, task.Version) {
+		task.State, task.Error = "completed", ""
 	}
 	if (task.State == "queued" || task.State == "running") && time.Since(task.RequestedAt) > 15*time.Minute {
 		task.State = "failed"

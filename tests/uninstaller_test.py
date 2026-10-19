@@ -70,7 +70,7 @@ class UninstallerTests(unittest.TestCase):
         self.services.add(service)
         base = '/opt/nekopass' if service == 'nekopass-agent' else '/opt/' + service
         config = '/etc/nekopass' if service == 'nekopass-agent' else '/etc/' + service
-        for name in ['nekopass-agent', 'nekopass-agent.previous', 'nekopass-update']:
+        for name in ['nekopass-agent', 'nekopass-agent.previous', 'nekopass-update', 'nekopass-agent-update-source.json']:
             self.put(base + '/bin/' + name)
         self.put(config + '/agent.env', 'NEKOPASS_NODE_TOKEN=fixture-secret-never-print')
         self.put(config + '/agent.env.bak.fixture')
@@ -97,7 +97,7 @@ class UninstallerTests(unittest.TestCase):
         self.run_uninstall()
         for name in protected:
             self.assertTrue(name.is_file(), name)
-        for name in ['var/lib/nekopass-agent', 'opt/nekopass-agent-hk1', 'etc/nekopass/agent.env', 'opt/nekopass/bin/nekopass-agent.previous']:
+        for name in ['var/lib/nekopass-agent', 'opt/nekopass-agent-hk1', 'etc/nekopass/agent.env', 'opt/nekopass/bin/nekopass-agent.previous', 'opt/nekopass/bin/nekopass-agent-update-source.json']:
             self.assertFalse((self.root / name).exists(), name)
         self.assertIn(('systemctl', 'daemon-reload'), self.calls)
         self.assertFalse(any('nekopass.service' in call for call in self.calls))

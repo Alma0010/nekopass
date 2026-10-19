@@ -97,7 +97,7 @@ ENV_FILE="$CONFIG_DIR/agent.env"; STATE_DIR="/var/lib/$SERVICE"; UNIT="/etc/syst
 for target in "$(dirname "$BIN")" "$CONFIG_DIR" "$STATE_DIR" /etc/systemd/system; do
  [[ "$(realpath -m "$target")" == "$target" ]] || die "Refusing symlinked installation directory: $target"
 done
-for target in "$BIN" "$ENV_FILE" "$UNIT"; do [[ ! -L "$target" ]] || die "Refusing symlink: $target"; done
+for target in "$BIN" "$ENV_FILE" "$UNIT" "$(dirname "$BIN")/nekopass-agent-update-source.json"; do [[ ! -L "$target" ]] || die "Refusing symlink: $target"; done
 WORK=$(mktemp -d /tmp/nekopass-install.XXXXXXXX)
 [[ "$WORK" == /tmp/nekopass-install.* ]] || die 'Invalid temporary directory'
 MANAGER_SOURCE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/nekopassctl.sh"
@@ -298,6 +298,11 @@ WantedBy=multi-user.target
 UNIT
 install -m 644 "$WORK/agent.service" "$UNIT"
 install -m 755 "$WORK/nekopass-update" "$(dirname "$BIN")/nekopass-update"
+python3 - "$DOWNLOAD_BASE" > "$WORK/update-source.json" <<'PY_UPDATE_SOURCE'
+import json,sys
+print(json.dumps({'download_base':sys.argv[1]}))
+PY_UPDATE_SOURCE
+install -o root -g root -m 644 "$WORK/update-source.json" "$(dirname "$BIN")/nekopass-agent-update-source.json"
 cat > "$WORK/update.service" <<UNIT
 [Unit]
 Description=Nekopass Agent release updater

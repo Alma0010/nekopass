@@ -9,6 +9,51 @@ if sys.platform=='win32':
 spec=importlib.util.spec_from_file_location('updater',ROOT/'scripts/nekopass-update.py')
 updater=importlib.util.module_from_spec(spec);spec.loader.exec_module(updater)
 class UpdaterTests(unittest.TestCase):
+ def test_capability_query_does_not_require_root_or_service(self):
+  output=io.StringIO()
+  with patch.object(sys,'argv',['updater','--capabilities']),patch.object(sys,'stdout',output),patch.object(updater.os,'geteuid',side_effect=AssertionError('must not require root'),create=True):
+   self.assertEqual(updater.main(),0)
+  self.assertEqual(json.loads(output.getvalue()),{'download_base':True})
+ def test_download_source_validation(self):
+  base='https://v4.gh-proxy.org/https://github.com/Alma0010/nekopass/releases/download'
+  self.assertEqual(updater.normalize_download_base(base+'/'),base)
+  for value in ['',None,123,'http://proxy.example/files','https://u:p@proxy.example/files','https://proxy.example/files?token=x','https://proxy.example/files#x','https://proxy.example:99999/files','https://proxy.example/space here','https://proxy.example/line\nnext','https://proxy.example/back\\slash']:
+   with self.subTest(value=value),self.assertRaises(ValueError):updater.normalize_download_base(value)
+ def test_agent_update_downloads_through_selected_proxy(self):
+  original_path=pathlib.Path
+  proxy='https://v4.gh-proxy.org/https://github.com/Alma0010/nekopass/releases/download'
+  with tempfile.TemporaryDirectory() as temp:
+   root=original_path(temp);base=root/'opt/nekopass-agent-test';(base/'bin').mkdir(parents=True)
+   binary=base/'bin/nekopass-agent';binary.write_bytes(b'\x7fELFold')
+   def paths(value):
+    value=str(value)
+    return root/value.lstrip('/') if value.startswith('/opt/') else original_path(value)
+   def download(url,target):target.write_bytes(b'\x7fELFnew')
+   def current(path,agent):return 'v0.19.2' if path.read_bytes()==b'\x7fELFold' else 'v0.19.3'
+   with patch.object(updater.pathlib,'Path',paths),patch.object(updater.platform,'machine',return_value='x86_64'),patch.object(updater,'download',side_effect=download) as fetch,patch.object(updater,'current',side_effect=current),patch.object(updater,'check_agent_download_source') as authorize,patch.object(updater.subprocess,'run',return_value=types.SimpleNamespace(returncode=1)):
+    updater.update('nekopass-agent-test','v0.19.3',proxy+'/')
+    authorize.assert_called_once_with(base,proxy)
+    self.assertEqual(fetch.call_args.args[0],proxy+'/v0.19.3/nekopass-agent-linux-amd64')
+    self.assertEqual(binary.read_bytes(),b'\x7fELFnew')
+    self.assertEqual(binary.with_name('nekopass-agent.previous').read_bytes(),b'\x7fELFold')
+ @unittest.skipIf(sys.platform=='win32','Linux ownership and no-follow flags')
+ def test_agent_download_source_requires_root_authorization(self):
+  proxy='https://proxy.example/https://github.com/Alma0010/nekopass/releases/download'
+  with tempfile.TemporaryDirectory() as temp:
+   base=pathlib.Path(temp);(base/'bin').mkdir();config=base/'bin/nekopass-agent-update-source.json'
+   updater.check_agent_download_source(base,updater.BASE)
+   with self.assertRaises(updater.DownloadSourceError):updater.check_agent_download_source(base,proxy)
+   config.write_text(json.dumps({'download_base':proxy}));config.chmod(0o644)
+   owner=types.SimpleNamespace(st_mode=config.stat().st_mode,st_uid=0)
+   with patch.object(updater.os,'fstat',return_value=owner):
+    updater.check_agent_download_source(base,proxy)
+    with self.assertRaises(ValueError):updater.check_agent_download_source(base,'https://other.example/releases')
+    owner.st_uid=123
+    with self.assertRaises(ValueError):updater.check_agent_download_source(base,proxy)
+    owner.st_uid=0;owner.st_mode|=0o020
+    with self.assertRaises(ValueError):updater.check_agent_download_source(base,proxy)
+   config.unlink();config.symlink_to(base/'missing')
+   with self.assertRaises(updater.DownloadSourceError):updater.check_agent_download_source(base,proxy)
  def test_curl_download_retries_without_disabling_certificate_checks(self):
   with tempfile.TemporaryDirectory() as temp:
    target=pathlib.Path(temp)/'package'
@@ -56,15 +101,22 @@ class UpdaterTests(unittest.TestCase):
    self.assertEqual((stage/'bin').stat().st_mode&0o777,0o755)
    self.assertEqual((stage/'bin/nekopass').stat().st_mode&0o777,0o755)
  def test_panel_request_can_use_existing_helper(self):
+  self.request_update(False)
+ def test_agent_request_uses_supplied_download_source(self):
+  self.request_update(True)
+ def request_update(self,agent):
   # No system changes: exercise main() request handling with the updater mocked.
   request={'generation':1,'version':'v0.13.1'}
+  service='nekopass-agent-test' if agent else 'nekopass'
+  if agent:request['download_base']='https://proxy.example/releases'
   with tempfile.TemporaryDirectory() as temp:
    lock=pathlib.Path(temp)/'lock'
    real_open=pathlib.Path.open
    def open_path(path,*args,**kwargs):return real_open(lock,*args,**kwargs)
-   with patch.object(sys,'argv',['updater','--service','nekopass','--request']),patch.object(updater.os,'geteuid',return_value=0,create=True),patch.object(updater.pathlib.Path,'resolve',lambda path:path),patch.object(updater.pathlib.Path,'open',open_path),patch.object(updater.pathlib.Path,'exists',return_value=True),patch.object(updater.pathlib.Path,'unlink'),patch.object(updater,'read_request',return_value=request),patch.object(updater,'write_result') as result,patch.object(updater,'update') as update,patch.object(updater.fcntl,'flock',create=True),patch.object(updater.fcntl,'LOCK_EX',1,create=True):
+   with patch.object(sys,'argv',['updater','--service',service,'--request']),patch.object(updater.os,'geteuid',return_value=0,create=True),patch.object(updater.pathlib.Path,'resolve',lambda path:path),patch.object(updater.pathlib.Path,'open',open_path),patch.object(updater.pathlib.Path,'exists',return_value=True),patch.object(updater.pathlib.Path,'unlink'),patch.object(updater,'read_request',return_value=request),patch.object(updater,'write_result') as result,patch.object(updater,'update') as update,patch.object(updater.fcntl,'flock',create=True),patch.object(updater.fcntl,'LOCK_EX',1,create=True):
     self.assertEqual(updater.main(),0)
-    update.assert_called_once_with('nekopass','v0.13.1')
+    if agent:update.assert_called_once_with(service,'v0.13.1',request['download_base'])
+    else:update.assert_called_once_with(service,'v0.13.1')
     self.assertEqual([call.args[3] for call in result.call_args_list],['running','completed'])
  def test_archive_cannot_escape_or_install_links(self):
   for name,kind in [('../escape',tarfile.REGTYPE),('/etc/escape',tarfile.REGTYPE),('web/symlink',tarfile.SYMTYPE),('bin/unknown',tarfile.REGTYPE)]:
@@ -134,6 +186,9 @@ class UpdaterTests(unittest.TestCase):
    for data in [{'generation':True,'version':'v0.10.0'},{'generation':0,'version':'v0.10.0'},{'generation':1,'version':'../oops'},{'generation':1,'version':'v0.10.0','url':'https://evil.example'}]:
     request.write_text(json.dumps(data))
     with self.assertRaises(ValueError):updater.read_request(request)
+   request.write_text(json.dumps({'generation':2,'version':'v0.19.3','download_base':'https://proxy.example/releases/'}));self.assertEqual(updater.read_request(request)['download_base'],'https://proxy.example/releases')
+   request.write_text(json.dumps({'generation':2,'version':'v0.19.3','download_base':'http://proxy.example/releases'}))
+   with self.assertRaises(ValueError):updater.read_request(request)
    link=root/'link';link.symlink_to(request)
    with self.assertRaises(OSError):updater.read_request(link)
 if __name__=='__main__':unittest.main()

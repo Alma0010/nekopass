@@ -153,10 +153,10 @@ async function copyKey(){try{await copyText(shownKey.value);ElMessage.success('�
         <el-tab-pane label="节点安装" name="installation">
           <div class="section-body settings-form">
             <el-form label-position="top" @submit.prevent="save">
-              <div class="form-section-title">节点一键安装</div>
-              <p class="field-tip">一键安装始终可用。默认从 GitHub Releases 下载，也可修改为自己的 HTTPS 下载源。</p>
+              <div class="form-section-title">节点安装与更新</div>
+              <p class="field-tip">默认从 GitHub Releases 下载，也可使用自己的 HTTPS 下载源。Agent 版本下载根地址同时用于节点安装和在线更新。</p>
               <el-form-item label="安装脚本地址"><el-input v-model="form.installer_url" placeholder="https://github.com/Alma0010/nekopass/releases/latest/download/install-agent.sh" /></el-form-item>
-              <el-form-item label="Agent 版本下载根地址"><el-input v-model="form.release_base_url" placeholder="https://github.com/Alma0010/nekopass/releases/download" /></el-form-item>
+              <el-form-item label="Agent 版本下载根地址"><el-input v-model="form.release_base_url" placeholder="https://github.com/Alma0010/nekopass/releases/download" /><span class="field-tip">保存后用于节点管理中的「更新」。首次使用或更换更新下载源时，请重新执行新版节点安装命令。</span></el-form-item>
               <div class="form-grid"><el-form-item label="Agent 版本"><el-input v-model="form.agent_version" placeholder="latest" /></el-form-item>
               </div>
             </el-form>

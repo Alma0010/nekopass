@@ -99,6 +99,7 @@ def removal_paths(service):
     items.append(path('/var/lib/' + service))
     if service == 'nekopass-agent':
         items.append(path('/etc/nekopass/agent.env'))
+        items.append(path('/opt/nekopass/bin/nekopass-agent-update-source.json'))
         items.extend(path('/etc/nekopass').glob('agent.env.bak.*'))
         for suffix in ['', '.previous', '.next', '.update-pending']:
             items.append(path('/opt/nekopass/bin/nekopass-agent' + suffix))

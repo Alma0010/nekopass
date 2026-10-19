@@ -86,6 +86,17 @@ def current(binary, agent):
     return output[1]
 
 
+def normalize_download_base(value):
+    if not isinstance(value, str) or not value or len(value) > 2048 or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value) or any(c in value for c in '\\?#'):
+        raise ValueError('Invalid release download base')
+    u = urllib.parse.urlsplit(value)
+    if u.scheme != 'https' or not value.startswith('https://') or not u.hostname or u.username is not None or u.password is not None or u.query or u.fragment:
+        raise ValueError('Invalid release download base')
+    if u.port is not None and not 1 <= u.port <= 65535:
+        raise ValueError('Invalid download port')
+    return value.rstrip('/')
+
+
 def read_request(path):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, 'rb') as file:
@@ -96,8 +107,10 @@ def read_request(path):
     if len(data) > 4096:
         raise ValueError('Update request too large')
     request = json.loads(data)
-    if set(request) != {'generation', 'version'} or type(request['generation']) is not int or not 1 <= request['generation'] <= 2**63-1 or not TAG.fullmatch(request['version']):
+    if not isinstance(request, dict) or set(request) not in ({'generation', 'version'}, {'generation', 'version', 'download_base'}) or type(request['generation']) is not int or not 1 <= request['generation'] <= 2**63-1 or not isinstance(request['version'], str) or not TAG.fullmatch(request['version']):
         raise ValueError('Invalid update request')
+    if 'download_base' in request:
+        request['download_base'] = normalize_download_base(request['download_base'])
     return request
 
 
@@ -107,7 +120,7 @@ def write_result(directory, service, request, state, error=''):
     fd, name = tempfile.mkstemp(prefix='.update-result-', dir=directory)
     try:
         with os.fdopen(fd, 'w') as file:
-            json.dump({**request, 'state': state, 'error': error[:500]}, file)
+            json.dump({'generation': request['generation'], 'version': request['version'], 'state': state, 'error': error[:500]}, file)
             file.flush()
             os.fsync(file.fileno())
         os.chown(name, owner.pw_uid, owner.pw_gid)
@@ -188,12 +201,39 @@ WantedBy=multi-user.target
     marker.chmod(0o644)
 
 
-def update(service, version):
+class DownloadSourceError(ValueError):
+    pass
+
+
+def check_agent_download_source(base, download_base):
+    if download_base == BASE:
+        return
+    try:
+        config = base / 'bin/nekopass-agent-update-source.json'
+        fd = os.open(config, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, 'rb') as file:
+            import stat
+            info = os.fstat(file.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+                raise ValueError('Agent update source must be root-owned and protected')
+            data = file.read(4097)
+        if len(data) > 4096:
+            raise ValueError('Agent update source is too large')
+        source = json.loads(data)
+        if not isinstance(source, dict) or set(source) != {'download_base'} or normalize_download_base(source['download_base']) != download_base:
+            raise ValueError('Download source changed; rerun the installer to authorize it')
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        raise DownloadSourceError('Rerun the installer to authorize the update source') from error
+
+def update(service, version, download_base=BASE):
+    download_base = normalize_download_base(download_base)
     agent = service.startswith('nekopass-agent')
     base = pathlib.Path('/opt/nekopass' if service in {'nekopass', 'nekopass-agent'} else '/opt/' + service)
     binary = base / 'bin' / ('nekopass-agent' if agent else 'nekopass')
     if base.resolve() != base or binary.is_symlink() or not binary.is_file():
         raise ValueError('Installation directory is invalid')
+    if agent:
+        check_agent_download_source(base, download_base)
     pending = binary.with_name(binary.name + ".update-pending")
     candidate = binary.with_name(binary.name + ".next")
     resume_active = False
@@ -217,7 +257,7 @@ def update(service, version):
         stage.chmod(0o755)
         if agent:
             replacement = stage / 'agent'
-            download(BASE + '/' + version + '/nekopass-agent-linux-' + arch, replacement)
+            download(download_base + '/' + version + '/nekopass-agent-linux-' + arch, replacement)
         else:
             package = stage / 'panel.tar.gz'
             download(BASE + '/' + version + '/nekopass-panel-linux-' + arch + '.tar.gz', package)
@@ -293,13 +333,17 @@ def update(service, version):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--service', required=True)
+    p.add_argument('--service')
+    p.add_argument('--capabilities', action='store_true', help=argparse.SUPPRESS)
     p.add_argument('--version', default='latest')
     p.add_argument('--check', action='store_true')
     p.add_argument('--request', action='store_true')
     p.add_argument('--setup-panel', action='store_true', help=argparse.SUPPRESS)
     args = p.parse_args()
-    if not SERVICE.fullmatch(args.service) or os.geteuid() != 0:
+    if args.capabilities:
+        print(json.dumps({'download_base': True}))
+        return 0
+    if not SERVICE.fullmatch(args.service or '') or os.geteuid() != 0:
         p.error('Run as root with a valid Nekopass service')
     if args.setup_panel:
         setup_panel_update(args.service)
@@ -321,6 +365,8 @@ def main():
                 if not name.exists():
                     return
                 request = read_request(name)
+                if 'download_base' in request and not args.service.startswith('nekopass-agent'):
+                    raise ValueError('Custom download sources require an Agent service')
                 name.unlink()
                 write_result(directory, args.service, request, 'running')
                 version = request['version']
@@ -334,14 +380,18 @@ def main():
                 installed = current(pathlib.Path(base) / 'bin' / ('nekopass-agent' if agent else 'nekopass'), agent)
                 print('Current:', installed, '\nLatest:', version, '\nRelease: https://github.com/' + REPOSITORY + '/releases/tag/' + version)
                 return
-            update(args.service, version)
+            if request and 'download_base' in request:
+                update(args.service, version, request['download_base'])
+            else:
+                update(args.service, version)
             if request:
                 write_result(directory, args.service, request, 'completed')
         except Exception as error:
             # Never echo response bodies, EnvironmentFile or credentials.
             print('Update failed:', type(error).__name__, '; inspect the service log and network connection.', file=sys.stderr)
             if request:
-                write_result(directory, args.service, request, 'failed', '更新失败，请查看更新服务日志和网络连接')
+                detail = '更新下载源尚未确认，请重新执行面板生成的节点安装命令' if isinstance(error, DownloadSourceError) else '更新失败，请查看更新服务日志和网络连接'
+                write_result(directory, args.service, request, 'failed', detail)
             return 1
     return 0
 

@@ -90,3 +90,27 @@ func TestPanelUpdateStatusIgnoresForeignResultsAndTimesOut(t *testing.T) {
 		t.Fatal("stale task blocks all future updates")
 	}
 }
+
+func TestManualPanelUpgradeReconcilesOldFailure(t *testing.T) {
+	s := New(nil)
+	dir := t.TempDir()
+	s.SetPanelUpdateDirectory(dir)
+	previous := release.Version
+	defer func() { release.Version = previous }()
+	task := panelUpdateTask{Generation: 3, Version: "v0.19.2", State: "failed", Error: "network failure", RequestedAt: time.Now()}
+	data, _ := json.Marshal(task)
+	if err := os.WriteFile(filepath.Join(dir, "panel-update-task.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	release.Version = "v0.19.1"
+	if s.currentPanelUpdate().State != "failed" {
+		t.Fatal("real failure hidden")
+	}
+	for _, version := range []string{"v0.19.2", "v0.19.3"} {
+		release.Version = version
+		got := s.currentPanelUpdate()
+		if got.State != "completed" || got.Error != "" {
+			t.Fatal("manual panel upgrade still shows old failure")
+		}
+	}
+}

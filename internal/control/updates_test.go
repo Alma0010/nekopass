@@ -145,3 +145,72 @@ func TestOfflineUpdateTimeoutIsUnconfirmedAndAcceptsLateCompletion(t *testing.T)
 		t.Fatal("late completion was discarded", state, err)
 	}
 }
+
+func TestNodeUpdateUsesSettingsProxyAndRejectsLegacyHelpers(t *testing.T) {
+	f := newSecurityFixture(t)
+	ctx := context.Background()
+	f.s.releaseChecked = time.Now()
+	f.s.releaseInfo = release.Info{Version: "v0.19.3"}
+	var original []byte
+	if err := f.p.QueryRow(ctx, "SELECT config FROM site_settings WHERE id=1").Scan(&original); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.p.Exec(ctx, "UPDATE site_settings SET config=$1 WHERE id=1", original) })
+	proxy := "https://v4.gh-proxy.org/https://github.com/Alma0010/nekopass/releases/download"
+	if _, err := f.p.Exec(ctx, "UPDATE site_settings SET config=jsonb_set(config,'{release_base_url}',to_jsonb($1::text)) WHERE id=1", proxy); err != nil {
+		t.Fatal(err)
+	}
+	var node int64
+	if err := f.p.QueryRow(ctx, "INSERT INTO nodes(name,token_hash,protocol_version,agent_version,update_supported,last_seen) VALUES($1,$2,25,'v0.19.2',true,now()) RETURNING id", Secret(), Secret()).Scan(&node); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.p.Exec(ctx, "DELETE FROM nodes WHERE id=$1", node) })
+	path := fmt.Sprintf("admin/nodes/%d/update", node)
+	securityStatus(t, f.request(f.admin, path, "POST", map[string]string{"version": "v0.19.3"}), 200)
+	stream := &StreamServer{Server: f.s}
+	report := &pb.AgentMessage{InstanceId: Secret(), ProtocolVersion: 25, AgentVersion: "v0.19.2", UpdateSupported: true}
+	out, err := stream.exchange(ctx, f.p, node, report)
+	if err != nil || out.Update != nil {
+		t.Fatal("legacy helper silently bypassed configured proxy", err)
+	}
+	var status, detail string
+	if err = f.p.QueryRow(ctx, "SELECT state,error FROM node_updates WHERE node_id=$1", node).Scan(&status, &detail); err != nil || status != "failed" || detail == "" {
+		t.Fatal("missing upgrade guidance", err)
+	}
+	securityStatus(t, f.request(f.admin, path, "POST", map[string]string{"version": "v0.19.3"}), 200)
+	report.UpdateDownloadBaseSupported = true
+	out, err = stream.exchange(ctx, f.p, node, report)
+	if err != nil || out.Update == nil || out.Update.DownloadBase != proxy || out.Update.Version != "v0.19.3" {
+		t.Fatal("configured proxy was not delivered", err)
+	}
+}
+
+func TestManualNodeUpgradeReconcilesFailedTask(t *testing.T) {
+	f := newSecurityFixture(t)
+	ctx := context.Background()
+	stream := &StreamServer{Server: f.s}
+	for _, c := range []struct{ version, want string }{{"v0.19.1", "failed"}, {"v0.19.2", "completed"}, {"v0.19.3", "completed"}, {"dev", "failed"}} {
+		t.Run(c.version, func(t *testing.T) {
+			var node int64
+			if err := f.p.QueryRow(ctx, "INSERT INTO nodes(name,token_hash) VALUES($1,$2) RETURNING id", Secret(), Secret()).Scan(&node); err != nil {
+				t.Fatal(err)
+			}
+			defer f.p.Exec(ctx, "DELETE FROM nodes WHERE id=$1", node)
+			if _, err := f.p.Exec(ctx, "INSERT INTO node_updates(node_id,generation,version,state,error) VALUES($1,4,'v0.19.2','failed','network failure')", node); err != nil {
+				t.Fatal(err)
+			}
+			report := &pb.AgentMessage{InstanceId: Secret(), ProtocolVersion: 25, AgentVersion: c.version, UpdateSupported: true, UpdateStatus: &pb.UpdateStatus{Generation: 4, Version: "v0.19.2", State: "failed", Error: "network failure"}}
+			out, err := stream.exchange(ctx, f.p, node, report)
+			if err != nil || out.Update != nil {
+				t.Fatal("manual update caused another download", err)
+			}
+			var state, detail string
+			if err = f.p.QueryRow(ctx, "SELECT state,error FROM node_updates WHERE node_id=$1", node).Scan(&state, &detail); err != nil || state != c.want {
+				t.Fatal("wrong reconciled state", state, err)
+			}
+			if state == "completed" && detail != "" {
+				t.Fatal("stale failure detail remained")
+			}
+		})
+	}
+}

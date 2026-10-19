@@ -1,10 +1,13 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"time"
 
 	pb "github.com/nekopass/nekopass/internal/protocol"
 	"github.com/nekopass/nekopass/internal/release"
@@ -15,6 +18,7 @@ func (e *Engine) SetUpdateDirectory(directory string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.updateDirectory = directory
+	e.updateDownloadBaseSupported = directory != "" && updaterDownloadBaseSupported()
 	return e.state.db.View(func(tx *bolt.Tx) error {
 		data := tx.Bucket([]byte("meta")).Get([]byte("update"))
 		if len(data) > 0 {
@@ -23,6 +27,20 @@ func (e *Engine) SetUpdateDirectory(directory string) error {
 		return nil
 	})
 }
+func updaterDownloadBaseSupported() bool {
+	executable, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	data, err := exec.CommandContext(ctx, filepath.Join(filepath.Dir(executable), "nekopass-update"), "--capabilities").Output()
+	var capabilities struct {
+		DownloadBase bool `json:"download_base"`
+	}
+	return err == nil && len(data) <= 4096 && json.Unmarshal(data, &capabilities) == nil && capabilities.DownloadBase
+}
+
 func (e *Engine) saveUpdateStatus() error {
 	data, err := json.Marshal(e.updateStatus)
 	if err != nil {
@@ -37,6 +55,11 @@ func (e *Engine) configureUpdate(request *pb.UpdateRequest) error {
 	if request.Generation < 1 || !release.ValidVersion(request.Version) {
 		return errors.New("invalid update request")
 	}
+	if request.DownloadBase != "" {
+		if _, err := release.NormalizeDownloadBase(request.DownloadBase); err != nil {
+			return err
+		}
+	}
 	if e.updateStatus != nil && request.Generation <= e.updateStatus.Generation {
 		return nil
 	}
@@ -46,11 +69,24 @@ func (e *Engine) configureUpdate(request *pb.UpdateRequest) error {
 		e.updateStatus.Error = "请先用新版安装脚本接入节点更新服务"
 		return e.saveUpdateStatus()
 	}
+	if request.DownloadBase != "" && !e.updateDownloadBaseSupported {
+		e.updateStatus.State = "failed"
+		e.updateStatus.Error = "更新组件不支持自定义下载源，请重新执行新版节点安装命令"
+		return e.saveUpdateStatus()
+	}
 	// Persist the consumed generation before a root helper can restart this process.
 	if err := e.saveUpdateStatus(); err != nil {
 		return err
 	}
-	data, _ := json.Marshal(map[string]any{"generation": request.Generation, "version": request.Version})
+	payload := map[string]any{"generation": request.Generation, "version": request.Version}
+	if request.DownloadBase != "" {
+		payload["download_base"], _ = release.NormalizeDownloadBase(request.DownloadBase)
+	}
+	data, _ := json.Marshal(payload)
+	if len(data) > 4096 {
+		e.updateStatus.State, e.updateStatus.Error = "failed", "更新下载地址过长，请缩短系统设置中的版本下载根地址"
+		return e.saveUpdateStatus()
+	}
 	tmp, err := os.CreateTemp(e.updateDirectory, ".update-request-*")
 	if err == nil {
 		name := tmp.Name()
@@ -98,7 +134,9 @@ func (e *Engine) readUpdateStatus() *pb.UpdateStatus {
 	if result.State != "running" && result.State != "completed" && result.State != "failed" {
 		return e.updateStatus
 	}
-	if result.State == "completed" && release.Version != result.Version {
+	if release.AtLeast(release.Version, result.Version) {
+		result.State, result.Error = "completed", ""
+	} else if result.State == "completed" {
 		result.State = "failed"
 		result.Error = "更新后的节点版本不匹配，请查看更新服务日志"
 	}

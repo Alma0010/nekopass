@@ -130,14 +130,43 @@ func updateControl(ctx context.Context, tx pgx.Tx, node int64, report *pb.AgentM
 		}
 	}
 	var generation int64
-	var version string
-	err := tx.QueryRow(ctx, "SELECT generation,version FROM node_updates WHERE node_id=$1 AND state IN ('queued','running')", node).Scan(&generation, &version)
+	var version, state string
+	err := tx.QueryRow(ctx, "SELECT generation,version,state FROM node_updates WHERE node_id=$1", node).Scan(&generation, &version, &state)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
+	if state != "completed" && release.AtLeast(report.AgentVersion, version) {
+		_, err = tx.Exec(ctx, "UPDATE node_updates SET state='completed',error='',updated_at=now() WHERE node_id=$1 AND generation=$2", node, generation)
+		return err
+	}
+	if state != "queued" && state != "running" {
+		return nil
+	}
+	settings, err := readSystemSettings(ctx, tx)
+	if err != nil {
+		return err
+	}
+	base := settings.ReleaseBaseURL
+	if base == "" {
+		base = release.DownloadBase
+	}
+	base, err = release.NormalizeDownloadBase(base)
+	failure := ""
+	if err != nil {
+		failure = "节点版本下载根地址无效，请检查系统设置"
+	} else if base != release.DownloadBase && (!report.UpdateSupported || !report.UpdateDownloadBaseSupported) {
+		failure = "节点的 Agent 或更新组件不支持自定义下载源，请重新执行新版节点安装命令"
+	}
+	if failure != "" {
+		_, err = tx.Exec(ctx, "UPDATE node_updates SET state='failed',error=$3,updated_at=now() WHERE node_id=$1 AND generation=$2", node, generation, failure)
+		return err
+	}
 	out.Update = &pb.UpdateRequest{Generation: generation, Version: version}
+	if report.UpdateDownloadBaseSupported {
+		out.Update.DownloadBase = base
+	}
 	return nil
 }

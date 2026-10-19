@@ -129,9 +129,8 @@ func validateSettings(v SystemSettings) error {
 		}
 	}
 	if v.ReleaseBaseURL != "" {
-		u, _ := url.Parse(v.ReleaseBaseURL)
-		if u.RawQuery != "" {
-			return errors.New("版本下载根地址不能包含查询参数")
+		if _, err := release.NormalizeDownloadBase(v.ReleaseBaseURL); err != nil {
+			return errors.New("版本下载根地址须为不含认证信息、查询参数和空白字符的有效 HTTPS 地址")
 		}
 	}
 	if !releaseVersion.MatchString(v.AgentVersion) || strings.Contains(v.AgentVersion, "..") {
