@@ -11,5 +11,5 @@ const emit=defineEmits<{'update:modelValue':[value:string];clear:[]}>()
  </el-select>
 </template>
 <style scoped>
-.egress-choice{display:inline-flex;align-items:center;gap:8px;width:100%}.egress-choice .ui-icon{flex-shrink:0;width:17px;height:17px}.is-node .ui-icon{color:#47c88a}.is-group .ui-icon{color:#66a9ff}.egress-choice small{margin-left:auto;padding-left:14px;color:var(--el-text-color-secondary)}
+.egress-choice{display:inline-flex;align-items:center;gap:8px;width:100%}.egress-choice .ui-icon{flex-shrink:0;width:17px;height:17px}.is-node .ui-icon,.is-group .ui-icon{color:var(--el-text-color-primary)}.egress-choice small{margin-left:auto;padding-left:14px;color:var(--el-text-color-secondary)}
 </style>

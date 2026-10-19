@@ -7,7 +7,7 @@ const grouped = computed(() => { const map = new Map<number, { id: number; name:
 function ready(n: ProbeNode, flag: keyof Probe) { return n.online && n.enabled && !!n.metrics?.[flag] }
 function percent(used?: number, total?: number) { return total ? Math.max(0, Math.min(100, Number(used || 0) / Number(total) * 100)) : 0 }
 function decimal(n?: number) { return Number(n || 0).toFixed(2) }
-function color(value: number) { return value >= 90 ? '#f4919c' : value >= 75 ? '#e4b573' : '#6baaff' }
+function color(value: number) { return value >= 90 ? 'var(--el-text-color-primary)' : value >= 75 ? 'var(--el-text-color-regular)' : 'var(--el-text-color-secondary)' }
 </script>
 <template>
  <div class="probe-page"><div class="probe-page-heading"><div><h2>节点状态</h2><p class="subtle">查看可用节点的实时运行状态</p></div><span class="probe-live"><span></span>自动更新</span></div><el-empty v-if="!grouped.length" description="当前套餐暂无可查看的节点组" />

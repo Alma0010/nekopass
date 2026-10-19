@@ -1,14 +1,22 @@
-import { onMounted, onUnmounted, ref } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { api, type Me } from './api'
+import { type Me } from './api'
+import {loadSession} from './session'
 
 export function usePage(load: (me: Me) => Promise<void>, options: { admin?: boolean; interval?: number } = {}) {
  const me = ref<Me | null>(null), loading = ref(true), error = ref(''), busy = ref(false)
  let timer: ReturnType<typeof setInterval> | undefined
- async function refresh() { if (!me.value) return; try { await load(me.value); error.value = '' } catch (e) { error.value = (e as Error).message } }
+ let stopped = false, refreshing: Promise<void> | undefined
+ const pageKey = location.pathname + location.search
+ async function refresh() {
+  if (!me.value || stopped) return
+  if (refreshing) return refreshing
+  refreshing = (async () => { try { await load(me.value!); if (!stopped) error.value = '' } catch (e) { if (!stopped) error.value = (e as Error).message } })().finally(() => { refreshing = undefined })
+  return refreshing
+ }
  async function run(task: () => Promise<void>) { busy.value = true; try { await task() } catch (e) { ElMessage.error((e as Error).message) } finally { busy.value = false } }
- onMounted(async () => { try { me.value = await api<Me>('me'); if (options.admin && !me.value.is_admin) { location.replace('/'); return }; await refresh() } catch (e) { error.value = (e as Error).message } finally { loading.value = false }; if (options.interval) timer = setInterval(() => { if (!document.hidden) void refresh() }, options.interval) })
- onUnmounted(() => { if (timer) clearInterval(timer) })
+ onMounted(async () => { try { me.value = await loadSession(); if(stopped)return; if (options.admin && !me.value.is_admin) { location.replace('/'); return }; await refresh() } catch (e) { error.value = (e as Error).message } finally { loading.value = false; await nextTick(); if (!stopped) window.dispatchEvent(new CustomEvent('nekopass:page-ready', { detail: pageKey })) }; if (options.interval && !stopped) timer = setInterval(() => { if (!document.hidden) void refresh() }, options.interval) })
+ onUnmounted(() => { stopped = true; if (timer) clearInterval(timer) })
  return { me, loading, error, busy, refresh, run }
 }
 
