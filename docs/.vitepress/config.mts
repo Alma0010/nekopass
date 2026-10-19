@@ -4,7 +4,7 @@ const base = process.env.VITEPRESS_BASE || '/'
 if (!base.startsWith('/') || !base.endsWith('/') || /[?#\\]/.test(base)) {
   throw new Error('VITEPRESS_BASE must be a path starting and ending with /')
 }
-const repository = process.env.GITHUB_REPOSITORY
+const repository = process.env.GITHUB_REPOSITORY || 'Alma0010/nekopass'
 
 export default defineConfig({
   lang: 'zh-CN',
@@ -81,6 +81,7 @@ export default defineConfig({
           { text: 'Telegram Bot', link: '/guide/telegram' },
           { text: '转发安全', link: '/guide/security' },
           { text: '日常管理', link: '/guide/manage' },
+          { text: '发布与文档部署', link: '/guide/publishing' },
           { text: '反向代理', link: '/guide/proxy' },
           { text: '常见问题', link: '/guide/troubleshooting' }
         ]

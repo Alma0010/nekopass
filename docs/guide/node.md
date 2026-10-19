@@ -18,8 +18,8 @@
 
 | 设置 | 示例 |
 | --- | --- |
-| 安装脚本地址 | `https://github.com/hajidishu/nekopass/releases/latest/download/install-agent.sh` |
-| 版本下载根地址 | `https://github.com/hajidishu/nekopass/releases/download` |
+| 安装脚本地址 | `https://github.com/Alma0010/nekopass/releases/latest/download/install-agent.sh` |
+| 版本下载根地址 | `https://github.com/Alma0010/nekopass/releases/download` |
 | Agent 版本 | `latest`（最新正式版，也可填写版本号） |
 
 节点连接信息由安装参数写入 `/etc/nekopass/agent.env`，只需 `NEKOPASS_SERVER` 和 `NEKOPASS_NODE_TOKEN`。规则、限速等运行配置通过 gRPC 下发；节点无需连接网页端口。
@@ -58,20 +58,20 @@ sudo nekopassctl agent update
 
 ### 取得脚本
 
-脚本位于本仓库的 `scripts/uninstall-agent.sh`。下面的示例在仓库根目录执行；包含此脚本的版本发布后，也可从 Releases 下载 `uninstall-agent.sh` 附件，此时将命令中的 `scripts/uninstall-agent.sh` 改为 `uninstall-agent.sh`。
+无需克隆仓库。在节点服务器上使用下面的命令，从本 fork 的最新正式 Release 下载脚本后执行。仓库需先发布包含 `uninstall-agent.sh` 的版本；发布步骤见 [发布与文档部署](./publishing.md)。
 
 ### 预览卸载范围
 
 只列出将清理的服务和文件，不修改系统：
 
 ```bash
-sudo bash scripts/uninstall-agent.sh --dry-run
+wget https://github.com/Alma0010/nekopass/releases/latest/download/uninstall-agent.sh -O uninstall-agent.sh && sudo bash uninstall-agent.sh --dry-run
 ```
 
 ### 完整卸载所有节点（默认）
 
 ```bash
-sudo bash scripts/uninstall-agent.sh
+wget https://github.com/Alma0010/nekopass/releases/latest/download/uninstall-agent.sh -O uninstall-agent.sh && sudo bash uninstall-agent.sh
 ```
 
 ### 只卸载一个节点
@@ -79,13 +79,13 @@ sudo bash scripts/uninstall-agent.sh
 使用安装时指定的服务名。例如，只卸载 `nekopass-agent-hk1`：
 
 ```bash
-sudo bash scripts/uninstall-agent.sh --service-name nekopass-agent-hk1
+wget https://github.com/Alma0010/nekopass/releases/latest/download/uninstall-agent.sh -O uninstall-agent.sh && sudo bash uninstall-agent.sh --service-name nekopass-agent-hk1
 ```
 
 服务名也可带 `.service`。预览单个节点的卸载范围时，将两个参数一起使用：
 
 ```bash
-sudo bash scripts/uninstall-agent.sh --service-name nekopass-agent-hk1 --dry-run
+wget https://github.com/Alma0010/nekopass/releases/latest/download/uninstall-agent.sh -O uninstall-agent.sh && sudo bash uninstall-agent.sh --service-name nekopass-agent-hk1 --dry-run
 ```
 
 默认节点的服务名是 `nekopass-agent`，只卸载默认节点时同样使用 `--service-name nekopass-agent`。

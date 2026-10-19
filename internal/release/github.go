@@ -14,7 +14,7 @@ import (
 
 var Version = "dev"
 
-const Repository = "hajidishu/nekopass"
+const Repository = "Alma0010/nekopass"
 const DownloadBase = "https://github.com/" + Repository + "/releases/download"
 const LatestBase = "https://github.com/" + Repository + "/releases/latest/download"
 
