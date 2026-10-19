@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.18.5
+  version: 0.19.0
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Administrator-created accounts or optional email-verified registration. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -1031,6 +1031,16 @@ paths:
       summary: Authorized nodes for creating own rules (id, name, public_address, port_min, port_max, online, tunnel_protocol)
       responses:
         '200': {description: Node choices array}
+  /rule-node-groups:
+    get:
+      summary: Explicitly authorized ingress groups and member port ranges, without credentials
+      responses:
+        '200': {description: 'Array of id, name, node_ids and ingress members; disabled-role members are excluded'}
+  /rule-egress-groups:
+    get:
+      summary: Explicitly authorized egress groups, without node credentials
+      responses:
+        '200': {description: 'Array of id, name, strategy and eligible member node_ids; filter by ingress links and business protocol when selecting'}
   /node-status:
     get:
       summary: User probe grouped by allowed plan node groups; no address or admin configuration fields
@@ -1232,6 +1242,24 @@ paths:
       summary: Admin-only rule-nodes; same contract as ordinary endpoint but scoped strictly to userID
       responses:
         '200': {description: Scoped result}
+        '403': {$ref: '#/components/responses/Error'}
+  /admin/users/{userID}/rule-node-groups:
+    get:
+      summary: Administrator-managed user ingress group choices
+      parameters:
+        - {in: path, name: userID, required: true, schema: {type: integer, format: int64}}
+      responses:
+        '200': {description: Explicit ingress groups assigned to the selected user}
+  /admin/users/{userID}/rule-egress-groups:
+    parameters:
+      - name: userID
+        in: path
+        required: true
+        schema: {type: integer, format: int64}
+    get:
+      summary: Authorized egress groups scoped to the managed user, administrators only
+      responses:
+        '200': {description: Group choices array}
         '403': {$ref: '#/components/responses/Error'}
   /admin/users/{userID}/rule-groups:
     parameters:
@@ -1464,22 +1492,26 @@ components:
       additionalProperties: false
       description: 'For action edit. Omitted or null fields remain unchanged. At least one non-null field is required. All selected rules must pass normal ownership, node permissions and resource validation.'
       properties:
+        ingress_group_id: {type: integer, format: int64, minimum: 1, nullable: true, description: 'Switch to an authorized ingress group, clear node_id and allocate a common port; mutually exclusive with node_id'}
         node_id: {type: integer, format: int64, minimum: 1, nullable: true, description: 'Changing an ordinary ingress assigns a new random port; same ingress retains the port. Shared TLS rules cannot move through this patch.'}
+        egress_group_id: {type: integer, format: int64, minimum: 0, nullable: true, description: 'Nonzero selects an explicitly authorized group and clears the single-node exit'}
         egress_node_id: {type: integer, format: int64, minimum: 0, nullable: true, description: '0 explicitly selects direct forwarding; requires permission on every effective ingress'}
         balance: {type: string, enum: [random, round_robin, least_connections], nullable: true}
         proxy_accept_enabled: {type: boolean, nullable: true, description: 'False disables; true preserves an enabled mode or enables auto detection. Shared TLS listener reception remains administrator-managed. Enabling is TCP-only and requires administrator-configured trusted CIDRs.'}
         proxy_send_enabled: {type: boolean, nullable: true, description: 'False disables; true preserves the existing enabled version or enables v2. Enabling is TCP-only.'}
     RuleInput:
       type: object
-      required: [node_id, enabled]
+      required: [enabled]
       properties:
         protocol: {type: string, enum: [tcp, udp], default: tcp, description: 'Business protocol; UDP requires Agent protocol 16, raw_udp exits require udp only. Proxy Protocol is TCP-only.'}
         user_id: {type: integer, format: int64, description: Ignored; owner is session or admin-managed user}
-        node_id: {type: integer, format: int64}
+        node_id: {type: integer, format: int64, minimum: 0, description: 'Single ingress node; select exactly one nonzero node_id or ingress_group_id'}
+        ingress_group_id: {type: integer, format: int64, minimum: 0, default: 0, description: 'Explicitly authorized ingress group. One logical rule and a common listener port on every member; shared TLS requires a single node.'}
         tls_inbound_id: {type: integer, format: int64, minimum: 0, default: 0, description: 'Shared TLS listener; requires TCP and Agent protocol 21; TLS stays end to end between client and target. Zero uses an ordinary rule port.'}
         sni_names: {type: array, maxItems: 32, items: {type: string}, description: 'Exact SNI domains; 1-32 required for shared TLS; names remain reserved when paused'}
         tls_alpn: {type: array, maxItems: 0, items: {type: string}, deprecated: true, description: 'Must be empty; shared listeners transparently preserve client-to-target ALPN negotiation'}
         origin_tls: {$ref: '#/components/schemas/OriginTLS'}
+        egress_group_id: {type: integer, format: int64, minimum: 0, default: 0, description: 'Authorized dynamic exit group; mutually exclusive with nonzero egress_node_id. Requires this fork''s Agent protocol 25 on ingress and participating exits.'}
         egress_node_id: {type: integer, format: int64, minimum: 0, default: 0, description: '0 means direct; other IDs must be linked to the ingress and allowed by the user plan'}
         name: {type: string, maxLength: 128, description: Defaults to first target if blank}
         group_id: {type: integer, format: int64, description: 0 means ungrouped; must belong to owner}
@@ -1525,7 +1557,21 @@ components:
         description: {type: string}
         enabled: {type: boolean}
         sort_order: {type: integer}
-        node_ids: {type: array, items: {type: integer, format: int64}}
+        strategy: {type: string, enum: [least_connections, round_robin, random], default: least_connections}
+        health_interval_seconds: {type: integer, minimum: 2, maximum: 60, default: 5}
+        health_failures: {type: integer, minimum: 1, maximum: 20, default: 3}
+        health_successes: {type: integer, minimum: 1, maximum: 20, default: 2}
+        node_ids: {type: array, maxItems: 10000, items: {type: integer, format: int64}}
+        members:
+          type: array
+          description: 'Per-group egress scheduling; omitted existing members retain their role and weight. New members default to active with weight 1.'
+          items:
+            type: object
+            required: [node_id, role, weight]
+            properties:
+              node_id: {type: integer, format: int64}
+              role: {type: string, enum: [active, standby, disabled]}
+              weight: {type: integer, minimum: 1, maximum: 1000}
     NodeInput:
       type: object
       required: [name, enabled, group_ids]
@@ -1562,7 +1608,7 @@ components:
       additionalProperties: false
       description: Administrator-only exit TLS protocol settings. Connection options are supplied to ingress nodes for this exit; DNS credentials and private keys are not forwarded.
       properties:
-        padding_enabled: {type: boolean, default: false, description: 'Effective only for raw_tcp + tls; requires both agents to support protocol 22. Other combinations retain but ignore it.'}
+        padding_enabled: {type: boolean, default: false, description: 'Effective only for raw_tcp + tls; requires both agents to support protocol 23. Other combinations retain but ignore it.'}
         padding_scheme: {type: array, nullable: true, maxItems: 65, items: {type: string}, description: 'AnyTLS-style lines: stop=N, 0=min-max, index=min-max,c,min-max. Empty uses the default policy. Stop 0-64; auth padding 1-2048; other sizes 1-16384; maximum 16 fragments per line and 8192 text bytes.'}
         server_name: {type: string, description: Exit certificate domain and default SNI}
         client_sni: {type: string, description: Optional SNI used by all ingress connections to this exit; certificate names remain verified}

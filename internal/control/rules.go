@@ -26,6 +26,7 @@ type RuleInput struct {
 	Protocol          string               `json:"protocol"`
 	UserID            int64                `json:"user_id"`
 	NodeID            int64                `json:"node_id"`
+	EgressGroupID     int64                `json:"egress_group_id"`
 	IngressGroupID    int64                `json:"ingress_group_id"`
 	EgressNodeID      int64                `json:"egress_node_id"`
 	Name              string               `json:"name"`
@@ -98,7 +99,7 @@ func (in *RuleInput) normalize() error {
 	if in.IngressGroupID != 0 && in.TLSInboundID != 0 {
 		return errors.New("共享 TLS 入站绑定单个节点，请选择单节点入口")
 	}
-	if in.EgressNodeID < 0 || in.EgressNodeID != 0 && in.EgressNodeID == in.NodeID {
+	if in.EgressGroupID < 0 || in.EgressGroupID != 0 && in.EgressNodeID != 0 || in.EgressNodeID < 0 || in.EgressNodeID != 0 && in.EgressNodeID == in.NodeID {
 		return errors.New("出口节点无效")
 	}
 	if len(in.Targets) == 0 && in.TargetHost != "" {
@@ -267,11 +268,11 @@ func putRule(ctx context.Context, tx pgx.Tx, actor store.User, id int64, in Rule
 	alpn, _ := json.Marshal(in.TLSALPN)
 	origin, _ := json.Marshal(in.OriginTLS)
 	if id == 0 {
-		if e := tx.QueryRow(ctx, `INSERT INTO rules(user_id,node_id,listen_port,target_host,target_port,enabled,egress_node_id,protocol,tls_inbound_id,sni_names,tls_alpn,origin_tls,ingress_group_id) VALUES($1,NULLIF($2,0),$3,$4,$5,$6,NULLIF($7,0),$8,NULLIF($9,0),$10,$11,$12,NULLIF($13,0)) RETURNING id`, in.UserID, in.NodeID, in.ListenPort, in.TargetHost, in.TargetPort, in.Enabled, in.EgressNodeID, in.Protocol, in.TLSInboundID, sni, alpn, origin, in.IngressGroupID).Scan(&id); e != nil {
+		if e := tx.QueryRow(ctx, `INSERT INTO rules(user_id,node_id,listen_port,target_host,target_port,enabled,egress_node_id,protocol,tls_inbound_id,sni_names,tls_alpn,origin_tls,ingress_group_id,egress_group_id) VALUES($1,NULLIF($2,0),$3,$4,$5,$6,NULLIF($7,0),$8,NULLIF($9,0),$10,$11,$12,NULLIF($13,0),NULLIF($14,0)) RETURNING id`, in.UserID, in.NodeID, in.ListenPort, in.TargetHost, in.TargetPort, in.Enabled, in.EgressNodeID, in.Protocol, in.TLSInboundID, sni, alpn, origin, in.IngressGroupID, in.EgressGroupID).Scan(&id); e != nil {
 			return 0, e
 		}
 	}
-	_, e := tx.Exec(ctx, `UPDATE rules SET node_id=NULLIF($2,0),name=$3,group_id=NULLIF($4,0),listen_port=$5,target_host=$6,target_port=$7,enabled=$8,targets=$9,balance=$10,speed_mbps=$11,ip_limit=$12,connection_limit=$13,proxy_accept=$14,proxy_send=$15,proxy_trusted_cidrs=$16,egress_node_id=NULLIF($17,0),protocol=$18,tls_inbound_id=NULLIF($19,0),sni_names=$20,tls_alpn=$21,origin_tls=$22,ingress_group_id=NULLIF($23,0),config_revision=(SELECT value+1 FROM revision WHERE id=1) WHERE id=$1`, id, in.NodeID, in.Name, in.GroupID, in.ListenPort, in.TargetHost, in.TargetPort, in.Enabled, targets, in.Balance, in.SpeedMbps, in.IPLimit, in.ConnectionLimit, in.ProxyAccept, in.ProxySend, trusted, in.EgressNodeID, in.Protocol, in.TLSInboundID, sni, alpn, origin, in.IngressGroupID)
+	_, e := tx.Exec(ctx, `UPDATE rules SET node_id=NULLIF($2,0),name=$3,group_id=NULLIF($4,0),listen_port=$5,target_host=$6,target_port=$7,enabled=$8,targets=$9,balance=$10,speed_mbps=$11,ip_limit=$12,connection_limit=$13,proxy_accept=$14,proxy_send=$15,proxy_trusted_cidrs=$16,egress_node_id=NULLIF($17,0),protocol=$18,tls_inbound_id=NULLIF($19,0),sni_names=$20,tls_alpn=$21,origin_tls=$22,ingress_group_id=NULLIF($23,0),egress_group_id=NULLIF($24,0),config_revision=(SELECT value+1 FROM revision WHERE id=1) WHERE id=$1`, id, in.NodeID, in.Name, in.GroupID, in.ListenPort, in.TargetHost, in.TargetPort, in.Enabled, targets, in.Balance, in.SpeedMbps, in.IPLimit, in.ConnectionLimit, in.ProxyAccept, in.ProxySend, trusted, in.EgressNodeID, in.Protocol, in.TLSInboundID, sni, alpn, origin, in.IngressGroupID, in.EgressGroupID)
 	return id, e
 }
 func finishRules(ctx context.Context, tx pgx.Tx) error {
@@ -316,12 +317,15 @@ func (s *Server) rules(w http.ResponseWriter, r *http.Request) {
 		s.dbError(w, e)
 		return
 	}
-	rows, e := s.Pool.Query(r.Context(), `SELECT r.id,r.user_id,COALESCE(r.node_id,0) AS node_id,COALESCE(r.ingress_group_id,0) AS ingress_group_id,COALESCE(ng.name,'') AS ingress_group_name,COALESCE(ri.node_id,0) AS ingress_node_id,COALESCE(n.name,'') AS ingress_node_name,COALESCE(r.egress_node_id,0) AS egress_node_id,COALESCE(en.name,'') AS egress_node_name,COALESCE(en.tunnel_protocol,'') AS egress_tunnel_protocol,r.protocol,r.listen_host,COALESCE(ti.port,r.listen_port) AS listen_port,COALESCE(r.tls_inbound_id,0) AS tls_inbound_id,r.sni_names,r.tls_alpn,r.origin_tls,r.target_host,r.target_port,r.enabled,r.name,r.group_id,r.targets,r.balance,r.proxy_accept,r.proxy_send,r.proxy_trusted_cidrs,r.traffic_baseline,r.config_revision,u.rule_speed_bps/125000 AS speed_mbps,u.rule_ip_limit AS ip_limit,u.rule_connection_limit AS connection_limit,u.username,COALESCE(ng.name,n.name,'') AS node_name,COALESCE(n.public_address,'') AS public_address,n.last_seen,COALESCE(n.sync_error,'') AS sync_error,n.applied_revision,
+	rows, e := s.Pool.Query(r.Context(), `SELECT r.id,r.user_id,COALESCE(r.node_id,0) AS node_id,COALESCE(r.ingress_group_id,0) AS ingress_group_id,COALESCE(ng.name,'') AS ingress_group_name,COALESCE(ri.node_id,0) AS ingress_node_id,COALESCE(n.name,'') AS ingress_node_name,COALESCE(r.egress_group_id,0) AS egress_group_id,COALESCE(eg.name,'') AS egress_group_name,COALESCE(r.egress_node_id,0) AS egress_node_id,COALESCE(en.name,'') AS egress_node_name,COALESCE(en.tunnel_protocol,'') AS egress_tunnel_protocol,r.protocol,r.listen_host,COALESCE(ti.port,r.listen_port) AS listen_port,COALESCE(r.tls_inbound_id,0) AS tls_inbound_id,r.sni_names,r.tls_alpn,r.origin_tls,r.target_host,r.target_port,r.enabled,r.name,r.group_id,r.targets,r.balance,r.proxy_accept,r.proxy_send,r.proxy_trusted_cidrs,r.traffic_baseline,r.config_revision,u.rule_speed_bps/125000 AS speed_mbps,u.rule_ip_limit AS ip_limit,u.rule_connection_limit AS connection_limit,u.username,COALESCE(ng.name,n.name,'') AS node_name,COALESCE(n.public_address,'') AS public_address,n.last_seen,COALESCE(n.sync_error,'') AS sync_error,n.applied_revision,
  COALESCE(g.name,'') AS group_name,GREATEST(COALESCE((SELECT sum(t.traffic) FROM all_rule_usage t WHERE t.rule_id=r.id),0)::bigint-r.traffic_baseline,0) AS traffic_bytes,
  CASE WHEN NOT r.enabled THEN 'disabled' WHEN NOT u.account_enabled THEN 'user_disabled' WHEN u.plan_id IS NULL THEN 'no_plan' WHEN NOT u.plan_enabled THEN 'plan_disabled' WHEN u.expires_at<=now() THEN 'expired' WHEN (r.ingress_group_id IS NOT NULL AND (ri.node_id IS NULL OR NOT COALESCE(ng.enabled,false) OR NOT EXISTS(SELECT 1 FROM user_node_groups ug WHERE ug.user_id=r.user_id AND ug.group_id=r.ingress_group_id))) OR NOT n.ingress_enabled OR NOT EXISTS(SELECT 1 FROM user_nodes un WHERE un.user_id=r.user_id AND un.node_id=ri.node_id) OR (r.egress_node_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM user_nodes un WHERE un.user_id=r.user_id AND un.node_id=r.egress_node_id)) THEN 'unauthorized'
+ WHEN r.egress_group_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM rule_outbound_routes o WHERE o.rule_id=r.id AND o.ingress_node_id=ri.node_id) THEN 'unauthorized'
+ WHEN r.egress_group_id IS NOT NULL AND (n.protocol_version<25 OR NOT EXISTS(SELECT 1 FROM rule_outbound_routes o JOIN nodes x ON x.id=o.egress_node_id WHERE o.rule_id=r.id AND o.ingress_node_id=ri.node_id AND x.protocol_version>=25)) THEN 'upgrade_required'
+ WHEN r.egress_group_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM rule_outbound_routes o JOIN nodes x ON x.id=o.egress_node_id WHERE o.rule_id=r.id AND o.ingress_node_id=ri.node_id AND x.protocol_version>=25 AND x.last_seen>now()-interval '12 seconds') THEN 'offline'
  WHEN u.quota_bytes>=0 AND (u.quota_bytes<=u.traffic_base_bytes+COALESCE((SELECT sum(traffic) FROM current_grants WHERE user_id=u.id),0) OR u.quota_bytes<u.traffic_base_bytes+COALESCE((SELECT sum(issued-released+unlimited_spent) FROM current_grants WHERE user_id=u.id),0)) THEN 'quota_exhausted'
 	 WHEN n.last_seen IS NULL OR n.last_seen<now()-interval '12 seconds' OR (en.id IS NOT NULL AND (en.last_seen IS NULL OR en.last_seen<now()-interval '12 seconds')) THEN 'offline'
-	 WHEN r.ingress_group_id IS NOT NULL AND r.egress_node_id IS NOT NULL AND en.protocol_version<24 THEN 'upgrade_required'
+	 WHEN r.ingress_group_id IS NOT NULL AND r.egress_node_id IS NOT NULL AND en.protocol_version<25 THEN 'upgrade_required'
  WHEN $3 AND (n.protocol_version<14 OR (en.id IS NOT NULL AND en.protocol_version<14)) THEN 'upgrade_required'
  WHEN (r.tls_inbound_id IS NOT NULL AND n.protocol_version<21) OR (r.origin_tls->>'enabled'='true' AND n.protocol_version<20) THEN 'upgrade_required'
  WHEN r.tls_inbound_id IS NULL AND n.tls_inbound_only AND r.protocol='tcp' THEN 'tls_required'
@@ -334,7 +338,7 @@ func (s *Server) rules(w http.ResponseWriter, r *http.Request) {
 	 WHEN en.tunnel_protocol='tls_h2' AND (n.protocol_version<11 OR en.protocol_version<11) THEN 'upgrade_required'
  WHEN en.tunnel_protocol IN ('tls_tcp','plain_h2') AND (n.protocol_version<13 OR en.protocol_version<13) THEN 'upgrade_required'
 	 WHEN n.sync_error<>'' OR COALESCE(en.sync_error,'')<>'' THEN 'failed' WHEN n.applied_revision<r.config_revision OR (en.id IS NOT NULL AND en.applied_revision<r.config_revision) THEN 'pending' ELSE 'active' END AS status
-	 FROM rules r JOIN user_entitlements u ON u.id=r.user_id LEFT JOIN rule_ingress_nodes ri ON ri.rule_id=r.id LEFT JOIN nodes n ON n.id=ri.node_id LEFT JOIN node_groups ng ON ng.id=r.ingress_group_id LEFT JOIN nodes en ON en.id=r.egress_node_id LEFT JOIN node_tls_inbounds ti ON ti.id=r.tls_inbound_id LEFT JOIN rule_groups g ON g.id=r.group_id WHERE $1 OR r.user_id=$2 ORDER BY r.id DESC,ri.node_id`, u.IsAdmin, u.ID, len(settings.TargetDenyCIDRs) > 0, len(settings.ProxyTrustedCIDRs) == 0)
+	 FROM rules r JOIN user_entitlements u ON u.id=r.user_id LEFT JOIN rule_ingress_nodes ri ON ri.rule_id=r.id LEFT JOIN nodes n ON n.id=ri.node_id LEFT JOIN node_groups ng ON ng.id=r.ingress_group_id LEFT JOIN nodes en ON en.id=r.egress_node_id LEFT JOIN node_groups eg ON eg.id=r.egress_group_id LEFT JOIN node_tls_inbounds ti ON ti.id=r.tls_inbound_id LEFT JOIN rule_groups g ON g.id=r.group_id WHERE $1 OR r.user_id=$2 ORDER BY r.id DESC,ri.node_id`, u.IsAdmin, u.ID, len(settings.TargetDenyCIDRs) > 0, len(settings.ProxyTrustedCIDRs) == 0)
 	if e != nil {
 		s.dbError(w, e)
 		return
@@ -498,7 +502,7 @@ func (s *Server) applyBatch(w http.ResponseWriter, r *http.Request, in BatchInpu
 func loadRule(ctx context.Context, tx pgx.Tx, id int64) (RuleInput, error) {
 	var v RuleInput
 	var targets, trusted, sni, alpn, origin []byte
-	e := tx.QueryRow(ctx, `SELECT user_id,COALESCE(node_id,0),COALESCE(egress_node_id,0),name,COALESCE(group_id,0),listen_port,targets,balance,speed_mbps,ip_limit,connection_limit,proxy_accept,proxy_send,proxy_trusted_cidrs,enabled,protocol,COALESCE(tls_inbound_id,0),sni_names,tls_alpn,origin_tls,COALESCE(ingress_group_id,0) FROM rules WHERE id=$1`, id).Scan(&v.UserID, &v.NodeID, &v.EgressNodeID, &v.Name, &v.GroupID, &v.ListenPort, &targets, &v.Balance, &v.SpeedMbps, &v.IPLimit, &v.ConnectionLimit, &v.ProxyAccept, &v.ProxySend, &trusted, &v.Enabled, &v.Protocol, &v.TLSInboundID, &sni, &alpn, &origin, &v.IngressGroupID)
+	e := tx.QueryRow(ctx, `SELECT user_id,COALESCE(node_id,0),COALESCE(egress_node_id,0),name,COALESCE(group_id,0),listen_port,targets,balance,speed_mbps,ip_limit,connection_limit,proxy_accept,proxy_send,proxy_trusted_cidrs,enabled,protocol,COALESCE(tls_inbound_id,0),sni_names,tls_alpn,origin_tls,COALESCE(ingress_group_id,0),COALESCE(egress_group_id,0) FROM rules WHERE id=$1`, id).Scan(&v.UserID, &v.NodeID, &v.EgressNodeID, &v.Name, &v.GroupID, &v.ListenPort, &targets, &v.Balance, &v.SpeedMbps, &v.IPLimit, &v.ConnectionLimit, &v.ProxyAccept, &v.ProxySend, &trusted, &v.Enabled, &v.Protocol, &v.TLSInboundID, &sni, &alpn, &origin, &v.IngressGroupID, &v.EgressGroupID)
 	if e == nil {
 		e = json.Unmarshal(targets, &v.Targets)
 	}

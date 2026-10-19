@@ -75,6 +75,12 @@ func h2PoolKey(rule *pb.Rule) string {
 func (t *h2Transport) Prune(rules []*pb.Rule) {
 	wanted := map[string]bool{}
 	for _, rule := range rules {
+		for _, p := range rule.EgressPeers {
+			v := peerRule(rule, p)
+			if tunnel.H2(v.TunnelProtocol) && v.Tls != nil {
+				wanted[h2PoolKey(v)] = true
+			}
+		}
 		if tunnel.H2(rule.TunnelProtocol) && rule.Tls != nil {
 			wanted[h2PoolKey(rule)] = true
 		}
@@ -84,6 +90,18 @@ func (t *h2Transport) Prune(rules []*pb.Rule) {
 	for key, pool := range t.pools {
 		if !wanted[key] {
 			pool.mu.Lock()
+			active := false
+			for _, peer := range pool.peers {
+				s := peer.cc.State()
+				if s.StreamsActive > 0 || s.StreamsReserved > 0 {
+					active = true
+					break
+				}
+			}
+			if active {
+				pool.mu.Unlock()
+				continue
+			}
 			for _, peer := range pool.peers {
 				peer.cc.Close()
 				peer.conn.Close()
@@ -184,6 +202,13 @@ func (t *h2Transport) Dial(dialCtx, lifetime context.Context, rule *pb.Rule, tar
 			r.Close()
 			w.Close()
 			return nil, result.err
+		}
+		if result.r.StatusCode == http.StatusBadGateway && hmac.Equal([]byte(result.r.Header.Get("X-Stream-Reply")), []byte(h2ResponseProof(rule.TunnelToken, peer.exporter, metadata))) {
+			result.r.Body.Close()
+			cancel()
+			r.Close()
+			w.Close()
+			return nil, errTunnelTarget
 		}
 		if result.r.StatusCode != http.StatusOK || ((cfg.RequireResponseProof || !tunnel.TLS(rule.TunnelProtocol)) && !hmac.Equal([]byte(result.r.Header.Get("X-Stream-Reply")), []byte(h2ResponseProof(rule.TunnelToken, peer.exporter, metadata)))) {
 			result.r.Body.Close()

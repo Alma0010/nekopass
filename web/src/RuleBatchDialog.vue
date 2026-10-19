@@ -2,9 +2,12 @@
 import {computed,reactive,ref,watch} from 'vue'
 import {ElMessage} from 'element-plus'
 import Icon from './Icon.vue'
+import EgressSelect from './EgressSelect.vue'
+import {commonEgressChoices,egressValue,splitEgress} from './egress-options'
+import type {RuleEgressGroup} from './api'
 import type {Rule,RuleNode,RuleBatchPatch,RuleNodeGroup} from './api'
 
-const props=defineProps<{modelValue:boolean;rules:Rule[];nodes:RuleNode[];nodeGroups?:RuleNodeGroup[];busy:boolean;limitsLabel:string}>()
+const props=defineProps<{modelValue:boolean;rules:Rule[];nodes:RuleNode[];nodeGroups?:RuleNodeGroup[];egressGroups?:RuleEgressGroup[];busy:boolean;limitsLabel:string}>()
 const emit=defineEmits<{
  'update:modelValue':[value:boolean]
  save:[value:{ids:number[];patch:RuleBatchPatch}]
@@ -17,19 +20,23 @@ function clearField(key:keyof RuleBatchPatch){delete form[key]}
 const hasSharedTLS=computed(()=>props.rules.some(r=>!!r.tls_inbound_id))
 const hasUDP=computed(()=>props.rules.some(r=>r.protocol==='udp'))
 const ingressNodes=computed(()=>props.nodes.filter(n=>n.ingress_enabled))
-const ingressIDs=computed(()=>[...new Set(form.ingress_group_id ? props.nodeGroups?.find(g=>g.id===form.ingress_group_id)?.node_ids||[] : props.rules.flatMap(r=>form.node_id?[form.node_id]:r.ingress_group_id?(r.ingress_nodes||[]).map(n=>n.node_id):[r.node_id]))])
 const ingressChoice=computed({get:()=>form.ingress_group_id?'g:'+form.ingress_group_id:form.node_id?'n:'+form.node_id:undefined,set:(value:string|undefined)=>{delete form.node_id;delete form.ingress_group_id;if(value){const [kind,id]=value.split(':');if(kind==='g')form.ingress_group_id=Number(id);else form.node_id=Number(id)}}})
-const directAllowed=computed(()=>ingressIDs.value.length>0&&ingressIDs.value.every(id=>props.nodes.some(n=>n.id===id&&n.allow_direct)||props.nodeGroups?.some(g=>g.members.some(n=>n.id===id&&n.allow_direct))))
-const exitNodes=computed(()=>props.nodes.filter(n=>n.tunnel_exit_enabled&&
- ingressIDs.value.every(id=>id!==n.id&&n.allowed_ingress_ids.includes(id))&&
- (!n.tunnel_protocol.endsWith('_udp')||props.rules.every(r=>r.protocol==='udp'))))
-watch([exitNodes,directAllowed],()=>{
- if(form.egress_node_id===0&&!directAllowed.value||form.egress_node_id!=null&&form.egress_node_id!==0&&!exitNodes.value.some(n=>n.id===form.egress_node_id))delete form.egress_node_id
+
+const exitChoices=computed(()=>{
+ if(!props.rules.length)return []
+ const choices=props.rules.map(r=>{
+  const ids=form.ingress_group_id?props.nodeGroups?.find(g=>g.id===form.ingress_group_id)?.node_ids||[]:form.node_id?[form.node_id]:r.ingress_group_id?(r.ingress_nodes||[]).map(n=>n.node_id):[r.node_id]
+  const members=ids.flatMap(id=>{const n=props.nodes.find(n=>n.id===id)||props.nodeGroups?.flatMap(g=>g.members).find(n=>n.id===id);return n?[n]:[]})
+  return commonEgressChoices(props.nodes,props.egressGroups||[],members,r.protocol||'tcp')
+ })
+ return choices[0]!.filter(o=>choices.every(c=>c.some(v=>v.value===o.value)))
 })
+const selectedEgress=computed({get:()=>form.egress_node_id==null&&form.egress_group_id==null?undefined:egressValue(form.egress_node_id,form.egress_group_id),set:(v:string|undefined)=>{delete form.egress_node_id;delete form.egress_group_id;if(v){const x=splitEgress(v);if(x.egress_group_id)form.egress_group_id=x.egress_group_id;else form.egress_node_id=x.egress_node_id}}})
+watch(exitChoices,()=>{if(selectedEgress.value&&!exitChoices.value.some(o=>o.value===selectedEgress.value))selectedEgress.value=undefined})
 function submit(){
  if(props.busy)return
  const patch:RuleBatchPatch={}
- for(const key of ['node_id','ingress_group_id','egress_node_id','balance','proxy_accept_enabled','proxy_send_enabled'] as const){
+ for(const key of ['node_id','ingress_group_id','egress_node_id','egress_group_id','balance','proxy_accept_enabled','proxy_send_enabled'] as const){
   const value=form[key]
   if(value!==undefined&&value!==null&&value!=='')Object.assign(patch,{[key]:value})
  }
@@ -49,10 +56,7 @@ function submit(){
     <span class="field-tip">{{hasSharedTLS?'共享 TLS 规则切换入口时，请逐条选择新节点的共享 TLS 入口。':'更换入口会重新分配监听端口；选择原入口时保留端口。'}}</span>
    </el-form-item>
    <el-form-item label="出口（留空不更新）">
-    <el-select v-model="form.egress_node_id" clearable @clear="clearField('egress_node_id')" placeholder="保持原出口" data-testid="batch-rule-egress">
-     <el-option v-if="directAllowed" label="#0 不使用隧道，直接转发" :value="0"/>
-     <el-option v-for="n in exitNodes" :key="n.id" :label="n.name" :value="n.id"/>
-    </el-select>
+    <EgressSelect v-model="selectedEgress" :options="exitChoices" clearable @clear="selectedEgress=undefined" placeholder="保持原出口" data-testid="batch-rule-egress"/>
    </el-form-item>
    <el-collapse v-model="advanced">
     <el-collapse-item title="高级选项（留空不更新）" name="advanced">

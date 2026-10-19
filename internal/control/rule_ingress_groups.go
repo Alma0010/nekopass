@@ -21,7 +21,7 @@ func ruleIngressIDs(ctx context.Context, tx pgx.Tx, in RuleInput) ([]int64, erro
 	if !allowed {
 		return nil, errors.New("用户没有此入口节点组的权限，或节点组已停用")
 	}
-	rows, err := tx.Query(ctx, `SELECT n.id FROM node_group_members m JOIN nodes n ON n.id=m.node_id WHERE m.group_id=$1 AND n.ingress_enabled ORDER BY n.id`, in.IngressGroupID)
+	rows, err := tx.Query(ctx, `SELECT n.id FROM node_group_members m JOIN nodes n ON n.id=m.node_id WHERE m.group_id=$1 AND m.role<>'disabled' AND n.ingress_enabled ORDER BY n.id`, in.IngressGroupID)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +50,15 @@ func validateRuleIngress(ctx context.Context, tx pgx.Tx, in RuleInput, ruleID, n
 	if !ingress {
 		return errors.New("此节点未启用入口功能")
 	}
-	if in.EgressNodeID == 0 {
+	if in.EgressGroupID != 0 {
+		var allowed bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM user_node_groups ug JOIN node_groups g ON g.id=ug.group_id AND g.enabled JOIN node_group_members m ON m.group_id=g.id AND m.role<>'disabled' JOIN nodes n ON n.id=m.node_id AND n.enabled AND n.tunnel_exit_enabled JOIN node_tunnel_links l ON l.egress_node_id=n.id AND l.ingress_node_id=$2 JOIN user_nodes un ON un.node_id=n.id AND un.user_id=$1 WHERE ug.user_id=$1 AND ug.group_id=$3 AND n.id<>$2 AND ($4='udp' OR n.tunnel_protocol NOT IN ('plain_udp','dtls_udp')))`, in.UserID, node, in.EgressGroupID, in.Protocol).Scan(&allowed); err != nil {
+			return err
+		}
+		if !allowed {
+			return fmt.Errorf("入口节点 #%d 没有此出口节点组的可用出口或用户无权使用", node)
+		}
+	} else if in.EgressNodeID == 0 {
 		if !direct {
 			return fmt.Errorf("入口节点 #%d 不允许直转，请选择所有入口都可用的出口", node)
 		}
@@ -97,7 +105,7 @@ func allocateRulePort(ctx context.Context, tx pgx.Tx, in *RuleInput, id int64, n
 // Recheck after node/group edits, once links and membership have both been saved.
 func validateGroupRuleTopology(ctx context.Context, tx pgx.Tx) error {
 	var invalid bool
-	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM rules r JOIN rule_ingress_nodes ri ON ri.rule_id=r.id JOIN nodes n ON n.id=ri.node_id LEFT JOIN nodes en ON en.id=r.egress_node_id WHERE r.ingress_group_id IS NOT NULL AND (r.listen_port NOT BETWEEN n.port_min AND n.port_max OR (r.protocol='tcp' AND n.tls_inbound_only) OR (r.egress_node_id IS NULL AND NOT n.allow_direct) OR (r.egress_node_id IS NOT NULL AND (n.id=en.id OR NOT en.tunnel_exit_enabled OR NOT EXISTS(SELECT 1 FROM node_tunnel_links l WHERE l.ingress_node_id=n.id AND l.egress_node_id=en.id) OR (r.protocol<>'udp' AND en.tunnel_protocol IN ('plain_udp','dtls_udp')))) OR (n.tunnel_exit_enabled AND n.tunnel_listen_port=r.listen_port AND CASE WHEN n.tunnel_protocol IN ('plain_udp','dtls_udp') THEN 'udp' ELSE 'tcp' END=r.protocol)))`).Scan(&invalid)
+	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM rules r JOIN rule_ingress_nodes ri ON ri.rule_id=r.id JOIN nodes n ON n.id=ri.node_id LEFT JOIN nodes en ON en.id=r.egress_node_id WHERE r.ingress_group_id IS NOT NULL AND (r.listen_port NOT BETWEEN n.port_min AND n.port_max OR (r.protocol='tcp' AND n.tls_inbound_only) OR (r.egress_node_id IS NULL AND r.egress_group_id IS NULL AND NOT n.allow_direct) OR (r.egress_node_id IS NOT NULL AND (n.id=en.id OR NOT en.tunnel_exit_enabled OR NOT EXISTS(SELECT 1 FROM node_tunnel_links l WHERE l.ingress_node_id=n.id AND l.egress_node_id=en.id) OR (r.protocol<>'udp' AND en.tunnel_protocol IN ('plain_udp','dtls_udp')))) OR (n.tunnel_exit_enabled AND n.tunnel_listen_port=r.listen_port AND CASE WHEN n.tunnel_protocol IN ('plain_udp','dtls_udp') THEN 'udp' ELSE 'tcp' END=r.protocol)))`).Scan(&invalid)
 	if err != nil {
 		return err
 	}
@@ -109,6 +117,6 @@ func validateGroupRuleTopology(ctx context.Context, tx pgx.Tx) error {
 
 func (s *Server) ruleNodeGroups(w http.ResponseWriter, r *http.Request) {
 	u := ruleActor(r)
-	rows, err := s.Pool.Query(r.Context(), `SELECT g.id,g.name,g.description,g.enabled,g.sort_order,g.strategy,COALESCE((SELECT array_agg(n.id ORDER BY n.id) FROM node_group_members m JOIN nodes n ON n.id=m.node_id AND n.ingress_enabled WHERE m.group_id=g.id),'{}') AS node_ids,COALESCE((SELECT jsonb_agg(jsonb_build_object('id',n.id,'name',n.name,'allow_direct',n.allow_direct,'port_min',n.port_min,'port_max',n.port_max,'enabled',n.enabled,'tls_inbound_only',n.tls_inbound_only) ORDER BY n.id) FROM node_group_members m JOIN nodes n ON n.id=m.node_id AND n.ingress_enabled WHERE m.group_id=g.id),'[]') AS members FROM node_groups g JOIN user_node_groups ug ON ug.group_id=g.id WHERE ug.user_id=$1 AND g.enabled ORDER BY g.sort_order,g.id`, u.ID)
+	rows, err := s.Pool.Query(r.Context(), `SELECT g.id,g.name,g.description,g.enabled,g.sort_order,g.strategy,COALESCE((SELECT array_agg(n.id ORDER BY n.id) FROM node_group_members m JOIN nodes n ON n.id=m.node_id AND n.ingress_enabled WHERE m.group_id=g.id AND m.role<>'disabled'),'{}') AS node_ids,COALESCE((SELECT jsonb_agg(jsonb_build_object('id',n.id,'name',n.name,'allow_direct',n.allow_direct,'port_min',n.port_min,'port_max',n.port_max,'enabled',n.enabled,'tls_inbound_only',n.tls_inbound_only) ORDER BY n.id) FROM node_group_members m JOIN nodes n ON n.id=m.node_id AND n.ingress_enabled WHERE m.group_id=g.id AND m.role<>'disabled'),'[]') AS members FROM node_groups g JOIN user_node_groups ug ON ug.group_id=g.id WHERE ug.user_id=$1 AND g.enabled ORDER BY g.sort_order,g.id`, u.ID)
 	s.sendRows(w, rows, err)
 }

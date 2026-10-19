@@ -57,6 +57,7 @@ type Engine struct {
 	connections      atomic.Int64
 	tunnel           *tunnelListener
 	tunnelPolicy     atomic.Pointer[tunnelPolicy]
+	egress           *egressManager
 	h2               *h2Transport
 	h2Certificate    atomic.Pointer[tls.Certificate]
 	acmeAck          atomic.Int64
@@ -122,6 +123,7 @@ func NewEngine(s *State, maxConnections int64) (*Engine, error) {
 		v.Store(n)
 		e.counters[id] = v
 	}
+	e.egress = newEgressManager(e.h2, &e.udpQueued)
 	return e, nil
 }
 func (e *Engine) Apply(c *pb.ControlMessage) error {
@@ -224,13 +226,20 @@ func (e *Engine) Apply(c *pb.ControlMessage) error {
 	}
 	for id, l := range e.listeners {
 		r := wanted[id]
-		if restartListeners || resetUsers[l.rule.UserId] || r == nil || !proto.Equal(r, l.rule) {
+		if restartListeners || resetUsers[l.rule.UserId] || r == nil || !sameRuntimeRule(r, l.rule) {
 			l.cancel()
 			l.ln.Close()
 			delete(e.listeners, id)
 		}
 	}
 	var errs []string
+	activeGroupRules := make([]*pb.Rule, 0, len(c.Rules))
+	for _, r := range c.Rules {
+		if a := e.users[r.UserId]; a != nil && a.valid() && (c.Node == nil || c.Node.Enabled) {
+			activeGroupRules = append(activeGroupRules, r)
+		}
+	}
+	e.egress.update(activeGroupRules)
 	e.h2.Prune(c.Rules)
 	if err := e.configureACME(c); err != nil {
 		errs = append(errs, "certificate validation port unavailable")
@@ -240,6 +249,7 @@ func (e *Engine) Apply(c *pb.ControlMessage) error {
 	}
 	for id, r := range wanted {
 		if e.listeners[id] != nil {
+			e.listeners[id].runtime.group.Store(r)
 			continue
 		}
 		address := net.JoinHostPort(r.ListenHost, strconv.Itoa(int(r.ListenPort)))
@@ -251,6 +261,7 @@ func (e *Engine) Apply(c *pb.ControlMessage) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		l := &listener{rule: r, runtime: newRuleRuntime(r), ln: ln, ctx: ctx, cancel: cancel}
 		l.runtime.configureNode(e.nodeConfiguration())
+		l.runtime.egress = e.egress
 		l.runtime.h2 = e.h2
 		l.runtime.dialTarget = e.dialTarget
 		e.listeners[id] = l
@@ -402,7 +413,7 @@ func (e *Engine) forwardPrepared(l *listener, client net.Conn, addresses proxyAd
 			case <-stopped:
 				return
 			case <-ticker.C:
-				if !a.valid() || (l.rule.EgressNodeId == 0 && !e.targetAllowed(target)) || (l.runtime.idleTimeout > 0 && time.Since(time.Unix(0, activity.Load())) >= l.runtime.idleTimeout) {
+				if !a.valid() || (l.rule.EgressNodeId == 0 && l.rule.EgressGroupId == 0 && !e.targetAllowed(target)) || (l.runtime.idleTimeout > 0 && time.Since(time.Unix(0, activity.Load())) >= l.runtime.idleTimeout) {
 					cancel()
 				}
 			}
@@ -491,7 +502,7 @@ func (e *Engine) Report() (*pb.AgentMessage, error) {
 		a.mu.Lock()
 		defer a.mu.Unlock()
 	}
-	r := &pb.AgentMessage{ProtocolVersion: 24, AgentVersion: release.Version, UpdateSupported: e.updateDirectory != "", UpdateStatus: e.readUpdateStatus(), AcmeAck: e.acmeAck.Load(), Probe: e.probe.Load(), InstanceId: e.state.Instance, AppliedRevision: e.revision, Error: e.syncError, ActiveConnections: e.connections.Load(), DdnsStatus: e.ddnsStatus.Load(), PublicIp: e.publicIP.Load(), IpRecoveryStatus: e.ipRecoveryStatus.Load()}
+	r := &pb.AgentMessage{ProtocolVersion: 25, AgentVersion: release.Version, UpdateSupported: e.updateDirectory != "", UpdateStatus: e.readUpdateStatus(), AcmeAck: e.acmeAck.Load(), Probe: e.probe.Load(), InstanceId: e.state.Instance, AppliedRevision: e.revision, Error: e.syncError, ActiveConnections: e.connections.Load(), DdnsStatus: e.ddnsStatus.Load(), PublicIp: e.publicIP.Load(), IpRecoveryStatus: e.ipRecoveryStatus.Load()}
 	pending, err := e.state.RestorePending()
 	if err != nil {
 		return nil, err
@@ -579,6 +590,7 @@ func (e *Engine) Close() {
 		l.conn.Close()
 	}
 	e.mu.Unlock()
+	e.egress.close()
 	e.h2.Close()
 	for _, server := range e.challengeServers {
 		server.Close()

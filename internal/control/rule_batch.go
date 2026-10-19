@@ -7,6 +7,7 @@ import "errors"
 type RuleBatchPatch struct {
 	IngressGroupID     *int64  `json:"ingress_group_id,omitempty"`
 	NodeID             *int64  `json:"node_id,omitempty"`
+	EgressGroupID      *int64  `json:"egress_group_id,omitempty"`
 	EgressNodeID       *int64  `json:"egress_node_id,omitempty"`
 	Balance            *string `json:"balance,omitempty"`
 	ProxyAcceptEnabled *bool   `json:"proxy_accept_enabled,omitempty"`
@@ -14,7 +15,7 @@ type RuleBatchPatch struct {
 }
 
 func (p *RuleBatchPatch) validate() error {
-	if p == nil || p.NodeID == nil && p.IngressGroupID == nil && p.EgressNodeID == nil && p.Balance == nil && p.ProxyAcceptEnabled == nil && p.ProxySendEnabled == nil {
+	if p == nil || p.NodeID == nil && p.IngressGroupID == nil && p.EgressNodeID == nil && p.EgressGroupID == nil && p.Balance == nil && p.ProxyAcceptEnabled == nil && p.ProxySendEnabled == nil {
 		return errors.New("请选择至少一个需要更新的字段")
 	}
 	if p.NodeID != nil && p.IngressGroupID != nil {
@@ -22,6 +23,9 @@ func (p *RuleBatchPatch) validate() error {
 	}
 	if p.IngressGroupID != nil && *p.IngressGroupID <= 0 {
 		return errors.New("入口节点组无效")
+	}
+	if p.EgressGroupID != nil && (*p.EgressGroupID < 0 || p.EgressNodeID != nil && *p.EgressGroupID != 0 && *p.EgressNodeID != 0) {
+		return errors.New("出口节点组无效")
 	}
 	if p.NodeID != nil && *p.NodeID <= 0 || p.EgressNodeID != nil && *p.EgressNodeID < 0 {
 		return errors.New("入口或出口节点无效")
@@ -51,6 +55,13 @@ func (p *RuleBatchPatch) apply(in *RuleInput) error {
 	}
 	if p.EgressNodeID != nil {
 		in.EgressNodeID = *p.EgressNodeID
+		in.EgressGroupID = 0
+	}
+	if p.EgressGroupID != nil {
+		in.EgressGroupID = *p.EgressGroupID
+		if in.EgressGroupID != 0 {
+			in.EgressNodeID = 0
+		}
 	}
 	if p.Balance != nil {
 		in.Balance = *p.Balance

@@ -196,6 +196,12 @@ func (e *Engine) handleH2(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Service unavailable", 503)
 		return
 	}
+	if open.Target == tunnelHealthTarget {
+		w.Header().Set("X-Stream-Reply", h2ResponseProof(key, exporter, metadata))
+		w.WriteHeader(200)
+		_ = http.NewResponseController(w).Flush()
+		return
+	}
 	dialCtx, cancelDial := context.WithTimeout(r.Context(), policy.dialTimeout)
 	network := "tcp"
 	if open.Network == "udp" {
@@ -204,6 +210,7 @@ func (e *Engine) handleH2(w http.ResponseWriter, r *http.Request) {
 	target, err := e.dialTarget(dialCtx, network, open.Target)
 	cancelDial()
 	if err != nil {
+		w.Header().Set("X-Stream-Reply", h2ResponseProof(key, exporter, metadata))
 		http.Error(w, "Service unavailable", 502)
 		return
 	}

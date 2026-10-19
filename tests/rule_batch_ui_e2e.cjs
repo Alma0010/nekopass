@@ -28,7 +28,7 @@ const rules=[1,2,3,4].map(id=>({id,user_id:2,node_id:10,node_name:'入口一',eg
  try{
   for(const managed of [false,true]){
    const context=await browser.newContext({viewport:{width:1440,height:1000}});const page=await context.newPage();const calls=[],errors=[];
-   page.on('pageerror',e=>errors.push(e.message));
+   page.setDefaultTimeout(15000);page.on('pageerror',e=>errors.push(e.message));
    await page.route('**/api/v1/**',async route=>{
     const url=new URL(route.request().url());const api=url.pathname.slice('/api/v1/'.length);
     if(route.request().method()==='POST'&&api.endsWith('rules/batch')){calls.push({path:api,body:route.request().postDataJSON()});return route.fulfill({json:{ok:true,count:2}})}
@@ -36,6 +36,7 @@ const rules=[1,2,3,4].map(id=>({id,user_id:2,node_id:10,node_name:'入口一',eg
     else if(api==='profile'||api==='admin/users/2')data=[profile];
     else if(api==='rules'||api==='admin/users/2/rules')data=rules;
     else if(api==='rule-nodes'||api==='admin/users/2/rule-nodes')data=nodes;
+    else if(api.endsWith('rule-egress-groups'))data=[{id:20,name:'出口节点组',strategy:'round_robin',node_ids:[20]}];
     else if(api.endsWith('rule-groups')||api.endsWith('tls-inbounds')||api.endsWith('rule-node-groups'))data=[];
     else if(api==='site')data={name:'Nekopass',site_name:'Nekopass'};
     await route.fulfill({json:data});
@@ -69,6 +70,10 @@ const rules=[1,2,3,4].map(id=>({id,user_id:2,node_id:10,node_name:'入口一',eg
    await advanced(dlg);assert.equal(await dlg.getByTestId('batch-rule-proxy-accept').locator('input').first().isDisabled(),true);
    await option(dlg,'batch-rule-balance','最少连接');await dlg.getByRole('button',{name:'确定',exact:true}).click();await dlg.waitFor({state:'hidden'});
    assert.deepEqual(calls.at(-1).body,{ids:[4],action:'edit',patch:{balance:'least_connections'}});
+   await select([0,1]);dlg=await open();await option(dlg,'batch-rule-egress','出口节点组');
+   assert.equal(await dlg.getByTestId('batch-rule-egress').locator('.is-group .ui-icon').count(),1);
+   await dlg.getByRole('button',{name:'确定',exact:true}).click();await dlg.waitFor({state:'hidden'});
+   assert.deepEqual(calls.at(-1).body,{ids:[1,2],action:'edit',patch:{egress_group_id:20}});
    assert.deepEqual(errors,[]);console.log('PASS browser batch edit, zero/false, clear/omit, polling, pause, mixed UDP, shared TLS; managed='+managed);
    await context.close();
   }

@@ -15,7 +15,7 @@ func groupRuleFixture(t *testing.T, count int) (*securityFixture, int64, []int64
 	nodes := []int64{}
 	for i := 0; i < count; i++ {
 		var node int64
-		if err := f.p.QueryRow(ctx, `INSERT INTO nodes(name,token_hash,port_min,port_max,public_address,protocol_version,last_seen,applied_revision) VALUES($1,$2,$3,$4,$5,24,now(),1000000) RETURNING id`, Secret(), Secret(), 24000+i, 24010-i, fmt.Sprintf("entry%d.example.com", i)).Scan(&node); err != nil {
+		if err := f.p.QueryRow(ctx, `INSERT INTO nodes(name,token_hash,port_min,port_max,public_address,protocol_version,last_seen,applied_revision) VALUES($1,$2,$3,$4,$5,25,now(),1000000) RETURNING id`, Secret(), Secret(), 24000+i, 24010-i, fmt.Sprintf("entry%d.example.com", i)).Scan(&node); err != nil {
 			t.Fatal(err)
 		}
 		nodes = append(nodes, node)
@@ -81,7 +81,7 @@ func TestGroupRuleFansOutCountsOnceAndTracksMembers(t *testing.T) {
 	instances := map[int64]string{}
 	for _, node := range nodes {
 		instances[node] = Secret()
-		out, err := stream.exchange(ctx, f.p, node, &pb.AgentMessage{ProtocolVersion: 24, InstanceId: instances[node], AppliedRevision: 1000000})
+		out, err := stream.exchange(ctx, f.p, node, &pb.AgentMessage{ProtocolVersion: 25, InstanceId: instances[node], AppliedRevision: 1000000})
 		if err != nil || len(out.Rules) != 1 || out.Rules[0].Id != id || int(out.Rules[0].ListenPort) != port {
 			t.Fatalf("fanout node %d: %v %v", node, out, err)
 		}
@@ -92,7 +92,7 @@ func TestGroupRuleFansOutCountsOnceAndTracksMembers(t *testing.T) {
 	}
 	// Cumulative reports from different agents are accounted independently, then summed once.
 	for i, node := range nodes[:2] {
-		_, err := stream.exchange(ctx, f.p, node, &pb.AgentMessage{ProtocolVersion: 24, InstanceId: instances[node], AppliedRevision: 1000000, RuleUsage: []*pb.RuleUsage{{RuleId: id, Traffic: int64((i + 1) * 100)}}})
+		_, err := stream.exchange(ctx, f.p, node, &pb.AgentMessage{ProtocolVersion: 25, InstanceId: instances[node], AppliedRevision: 1000000, RuleUsage: []*pb.RuleUsage{{RuleId: id, Traffic: int64((i + 1) * 100)}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -103,7 +103,7 @@ func TestGroupRuleFansOutCountsOnceAndTracksMembers(t *testing.T) {
 	// Removing members retires their listeners and ports, but retains historical traffic.
 	kept := nodes[1:]
 	securityStatus(t, f.request(f.admin, fmt.Sprintf("admin/node-groups/%d", group), "PUT", map[string]any{"name": Secret(), "enabled": true, "node_ids": kept}), 200)
-	out, err := stream.exchange(ctx, f.p, nodes[0], &pb.AgentMessage{ProtocolVersion: 24, InstanceId: instances[nodes[0]]})
+	out, err := stream.exchange(ctx, f.p, nodes[0], &pb.AgentMessage{ProtocolVersion: 25, InstanceId: instances[nodes[0]]})
 	if err != nil || len(out.Rules) != 0 {
 		t.Fatal("removed member still has rule", err)
 	}
@@ -115,7 +115,7 @@ func TestGroupRuleFansOutCountsOnceAndTracksMembers(t *testing.T) {
 		t.Fatal("history lost", got)
 	}
 	securityStatus(t, f.request(f.admin, fmt.Sprintf("admin/node-groups/%d", group), "PUT", map[string]any{"name": Secret(), "enabled": true, "node_ids": nodes}), 200)
-	out, err = stream.exchange(ctx, f.p, nodes[0], &pb.AgentMessage{ProtocolVersion: 24, InstanceId: instances[nodes[0]]})
+	out, err = stream.exchange(ctx, f.p, nodes[0], &pb.AgentMessage{ProtocolVersion: 25, InstanceId: instances[nodes[0]]})
 	if err != nil || len(out.Rules) != 1 {
 		t.Fatal("rejoined member missing rule", err)
 	}
@@ -172,7 +172,7 @@ func TestGroupRulePermissionsPortsAndAtomicMembership(t *testing.T) {
 	testAuthorize(t, f.p, f.user, nodes[0])
 	testAuthorize(t, f.p, f.user, nodes[1])
 	f.p.Exec(ctx, "UPDATE node_groups SET enabled=false WHERE id=$1", group)
-	out, err := (&StreamServer{Server: f.s}).exchange(ctx, f.p, nodes[0], &pb.AgentMessage{ProtocolVersion: 24, InstanceId: Secret()})
+	out, err := (&StreamServer{Server: f.s}).exchange(ctx, f.p, nodes[0], &pb.AgentMessage{ProtocolVersion: 25, InstanceId: Secret()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestGroupTunnelDispatchSupportsEveryIngressAndRequiresNewExitAgent(t *testi
 	f, group, nodes := groupRuleFixture(t, 2)
 	ctx := context.Background()
 	var exit int64
-	if err := f.p.QueryRow(ctx, `INSERT INTO nodes(name,token_hash,ingress_enabled,tunnel_exit_enabled,tunnel_public_host,tunnel_listen_port,protocol_version) VALUES($1,$2,false,true,'127.0.0.1',35000,24) RETURNING id`, Secret(), Secret()).Scan(&exit); err != nil {
+	if err := f.p.QueryRow(ctx, `INSERT INTO nodes(name,token_hash,ingress_enabled,tunnel_exit_enabled,tunnel_public_host,tunnel_listen_port,protocol_version) VALUES($1,$2,false,true,'127.0.0.1',35000,25) RETURNING id`, Secret(), Secret()).Scan(&exit); err != nil {
 		t.Fatal(err)
 	}
 	testAuthorize(t, f.p, f.user, exit)
@@ -211,7 +211,7 @@ func TestGroupTunnelDispatchSupportsEveryIngressAndRequiresNewExitAgent(t *testi
 	id := ruleResultID(t, f, in)
 	stream := &StreamServer{Server: f.s}
 	instance := Secret()
-	out, err := stream.exchange(ctx, f.p, exit, &pb.AgentMessage{ProtocolVersion: 24, InstanceId: instance})
+	out, err := stream.exchange(ctx, f.p, exit, &pb.AgentMessage{ProtocolVersion: 25, InstanceId: instance})
 	if err != nil || len(out.EgressRules) != 2 {
 		t.Fatal("exit must authorize both ingresses", out, err)
 	}
@@ -220,11 +220,11 @@ func TestGroupTunnelDispatchSupportsEveryIngressAndRequiresNewExitAgent(t *testi
 			t.Fatal("different logical rule")
 		}
 	}
-	out, err = stream.exchange(ctx, f.p, exit, &pb.AgentMessage{ProtocolVersion: 23, InstanceId: instance})
+	out, err = stream.exchange(ctx, f.p, exit, &pb.AgentMessage{ProtocolVersion: 24, InstanceId: instance})
 	if err != nil || len(out.EgressRules) != 0 {
 		t.Fatal("old exit received group routes", err)
 	}
-	out, err = stream.exchange(ctx, f.p, nodes[0], &pb.AgentMessage{ProtocolVersion: 24, InstanceId: Secret()})
+	out, err = stream.exchange(ctx, f.p, nodes[0], &pb.AgentMessage{ProtocolVersion: 25, InstanceId: Secret()})
 	if err != nil || len(out.Rules) != 1 || out.Rules[0].Enabled {
 		t.Fatal("group tunnel active before exit upgrade", err)
 	}
@@ -271,5 +271,82 @@ func TestGroupBatchAndImportKeepBindingsAndRollbackAtomically(t *testing.T) {
 	securityStatus(t, f.request(f.admin, fmt.Sprintf("admin/node-groups/%d", group), "PUT", map[string]any{"name": Secret(), "enabled": true, "node_ids": nodes}), 200)
 	if len(groupRuleList(t, f)[0]["ingress_nodes"].([]any)) != 2 {
 		t.Fatal("group did not recover after adding members")
+	}
+}
+
+func TestIngressAndEgressGroupsKeepEachEntrysOwnRoutes(t *testing.T) {
+	f, ingressGroup, entries := groupRuleFixture(t, 2)
+	ctx := context.Background()
+	var egressGroup int64
+	if err := f.p.QueryRow(ctx, "INSERT INTO node_groups(name) VALUES($1) RETURNING id", Secret()).Scan(&egressGroup); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.p.Exec(ctx, "INSERT INTO user_node_groups(user_id,group_id) VALUES($1,$2)", f.user, egressGroup); err != nil {
+		t.Fatal(err)
+	}
+	exits := []int64{}
+	for i, entry := range entries {
+		var exit int64
+		if err := f.p.QueryRow(ctx, `INSERT INTO nodes(name,token_hash,ingress_enabled,tunnel_exit_enabled,tunnel_public_host,tunnel_listen_port,protocol_version) VALUES($1,$2,false,true,'127.0.0.1',35000,25) RETURNING id`, Secret(), Secret()).Scan(&exit); err != nil {
+			t.Fatal(err)
+		}
+		exits = append(exits, exit)
+		if _, err := f.p.Exec(ctx, "INSERT INTO node_group_members(group_id,node_id,role) VALUES($1,$2,$3)", egressGroup, exit, []string{"active", "standby"}[i]); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.p.Exec(ctx, "INSERT INTO node_tunnel_links(ingress_node_id,egress_node_id,token) VALUES($1,$2,$3)", entry, exit, Secret()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		f.p.Exec(ctx, "DELETE FROM rules WHERE user_id=$1", f.user)
+		f.p.Exec(ctx, "DELETE FROM user_node_groups WHERE group_id=$1", egressGroup)
+		f.p.Exec(ctx, "DELETE FROM node_groups WHERE id=$1", egressGroup)
+		f.p.Exec(ctx, "DELETE FROM grants WHERE node_id=ANY($1)", exits)
+		f.p.Exec(ctx, "DELETE FROM nodes WHERE id=ANY($1)", exits)
+	})
+	in := groupInput(ingressGroup)
+	in.EgressGroupID = egressGroup
+	ruleID := ruleResultID(t, f, in)
+	stream := &StreamServer{Server: f.s}
+	instances := map[int64]string{}
+	exchange := func(node int64, version int32) *pb.ControlMessage {
+		t.Helper()
+		if instances[node] == "" {
+			instances[node] = Secret()
+		}
+		out, err := stream.exchange(ctx, f.p, node, &pb.AgentMessage{ProtocolVersion: version, InstanceId: instances[node]})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	for i, entry := range entries {
+		out := exchange(entry, 25)
+		if len(out.Rules) != 1 || !out.Rules[0].Enabled || len(out.Rules[0].EgressPeers) != 1 || out.Rules[0].EgressPeers[0].NodeId != exits[i] {
+			t.Fatalf("entry %d received wrong routes: %v", entry, out.Rules)
+		}
+		exit := exchange(exits[i], 25)
+		if len(exit.EgressRules) != 1 || exit.EgressRules[0].RuleId != ruleID || exit.EgressRules[0].IngressNodeId != entry {
+			t.Fatalf("exit received foreign ingress authorization: %v", exit.EgressRules)
+		}
+	}
+	if exchange(entries[0], 24).Rules[0].Enabled {
+		t.Fatal("a legacy v24 entry received an enabled group rule")
+	}
+	if len(exchange(exits[0], 24).EgressRules) != 0 {
+		t.Fatal("a legacy v24 exit received group grants")
+	}
+	if exchange(entries[0], 25).Rules[0].Enabled {
+		t.Fatal("entry stayed active with an incompatible exit")
+	}
+	if !exchange(entries[1], 25).Rules[0].Enabled {
+		t.Fatal("other ingress was affected by incompatible exit")
+	}
+	exchange(exits[0], 25)
+	// Member roles apply to ingress bindings as well as outbound scheduling.
+	securityStatus(t, f.request(f.admin, fmt.Sprintf("admin/node-groups/%d", ingressGroup), "PUT", map[string]any{"name": Secret(), "enabled": true, "node_ids": entries, "members": []nodeGroupMember{{NodeID: entries[0], Role: "disabled", Weight: 1}, {NodeID: entries[1], Role: "active", Weight: 1}}}), 200)
+	if len(exchange(entries[0], 25).Rules) != 0 || len(exchange(entries[1], 25).Rules) != 1 {
+		t.Fatal("disabled ingress member still receives rule")
 	}
 }

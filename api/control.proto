@@ -78,6 +78,16 @@ message Rule {
   repeated string sni_names = 26;
   repeated string tls_alpn = 27;
   OriginTLSConfig origin_tls = 28;
+  int64 egress_group_id = 29;
+  repeated EgressPeer egress_peers = 30;
+  string egress_strategy = 31;
+  int32 health_interval_seconds = 32;
+  int32 health_failures = 33;
+  int32 health_successes = 34;
+}
+message EgressPeer {
+ int64 node_id = 1; string host = 2; int32 port = 3; string token = 4;
+ string protocol = 5; TLSClientConfig tls = 6; int32 weight = 7; bool standby = 8;
 }
 message OriginTLSConfig { bool enabled = 1; string server_name = 2; string root_ca = 3; repeated string alpn = 4; }
 message SharedTLSInbound {

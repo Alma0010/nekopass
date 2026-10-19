@@ -7,6 +7,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	pb "github.com/nekopass/nekopass/internal/protocol"
@@ -15,6 +16,8 @@ import (
 )
 
 type ruleRuntime struct {
+	egress       *egressManager
+	group        atomic.Pointer[pb.Rule]
 	mu           sync.Mutex
 	policy       *pb.Rule
 	active       int
@@ -35,6 +38,7 @@ func newRuleRuntime(r *pb.Rule) *ruleRuntime {
 		targets = []string{net.JoinHostPort(r.TargetHost, strconv.Itoa(int(r.TargetPort)))}
 	}
 	v := &ruleRuntime{policy: r, ips: map[string]int{}, targets: targets, targetActive: make([]int, len(targets))}
+	v.group.Store(r)
 	if r.SpeedBps > 0 {
 		v.limiter = rate.NewLimiter(rate.Limit(r.SpeedBps), int(max(int64(BufferSize), min(r.SpeedBps/100, 1<<20))))
 	}
@@ -120,7 +124,10 @@ func (r *ruleRuntime) dialRoute(ctx context.Context) (net.Conn, func(), string, 
 		d := net.Dialer{Timeout: 2 * time.Second, KeepAlive: 30 * time.Second}
 		var c net.Conn
 		var e error
-		if r.policy.EgressNodeId == 0 {
+		var releaseExit func()
+		if r.policy.EgressGroupId != 0 {
+			c, releaseExit, e = r.egress.dial(dialCtx, ctx, r.group.Load(), r.targets[i], false)
+		} else if r.policy.EgressNodeId == 0 {
 			if r.dialTarget != nil {
 				c, e = r.dialTarget(dialCtx, "tcp", r.targets[i])
 			} else {
@@ -138,7 +145,12 @@ func (r *ruleRuntime) dialRoute(ctx context.Context) (net.Conn, func(), string, 
 			}
 		}
 		if e == nil {
-			return c, func() { r.releaseTarget(i) }, r.targets[i], nil
+			return c, func() {
+				if releaseExit != nil {
+					releaseExit()
+				}
+				r.releaseTarget(i)
+			}, r.targets[i], nil
 		}
 		r.releaseTarget(i)
 		last = e

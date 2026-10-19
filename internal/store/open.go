@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"errors"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"strings"
 )
 
 //go:embed schema.sql
@@ -94,7 +95,10 @@ var migration028 string
 //go:embed migration029.sql
 var migration029 string
 
-const CurrentSchemaVersion = 29
+//go:embed migration030.sql
+var migration030 string
+
+const CurrentSchemaVersion = 30
 
 func CheckSchema(ctx context.Context, p *pgxpool.Pool) error {
 	var version int
@@ -268,8 +272,21 @@ func Migrate(ctx context.Context, p *pgxpool.Pool) error {
 			return err
 		}
 	}
-	if version < 29 {
-		if _, err = tx.Exec(ctx, migration029); err != nil {
+	// The pre-v0.19 fork used schema 29 for ingress groups. Official v0.19
+	// used that number for egress groups; detect the actual installed schema.
+	var hasEgressGroups bool
+	if version == 29 {
+		if err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='rules' AND column_name='egress_group_id')").Scan(&hasEgressGroups); err != nil {
+			return err
+		}
+	}
+	if version < 29 || version == 29 && !hasEgressGroups {
+		if _, err = tx.Exec(ctx, strings.Replace(migration029, "INSERT INTO schema_version VALUES(29);", "INSERT INTO schema_version VALUES(29) ON CONFLICT DO NOTHING;", 1)); err != nil {
+			return err
+		}
+	}
+	if version < 30 {
+		if _, err = tx.Exec(ctx, migration030); err != nil {
 			return err
 		}
 	}

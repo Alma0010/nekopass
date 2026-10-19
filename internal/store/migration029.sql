@@ -1,43 +1,30 @@
--- Group bindings remain one rule and resolve current members on each sync.
-ALTER TABLE rules ALTER COLUMN node_id DROP NOT NULL;
-ALTER TABLE rules ADD COLUMN ingress_group_id bigint REFERENCES node_groups(id);
-ALTER TABLE rules ADD CONSTRAINT rules_ingress_binding CHECK(num_nonnulls(node_id,ingress_group_id)=1);
-ALTER TABLE rules ADD CONSTRAINT rules_group_tls CHECK(ingress_group_id IS NULL OR tls_inbound_id IS NULL);
-CREATE INDEX rules_ingress_group ON rules(ingress_group_id) WHERE ingress_group_id IS NOT NULL;
--- Disabled members retain their ports; dispatch checks group authorization separately.
-CREATE VIEW rule_ingress_nodes AS
- SELECT id AS rule_id,node_id FROM rules WHERE node_id IS NOT NULL
+ALTER TABLE node_groups DROP CONSTRAINT node_groups_strategy_check;
+UPDATE node_groups SET strategy='least_connections' WHERE strategy='manual';
+ALTER TABLE node_groups ALTER COLUMN strategy SET DEFAULT 'least_connections';
+ALTER TABLE node_groups ADD CHECK(strategy IN ('least_connections','round_robin','random'));
+ALTER TABLE node_groups ADD COLUMN health_interval_seconds integer NOT NULL DEFAULT 5 CHECK(health_interval_seconds BETWEEN 2 AND 60);
+ALTER TABLE node_groups ADD COLUMN health_failures integer NOT NULL DEFAULT 3 CHECK(health_failures BETWEEN 1 AND 20);
+ALTER TABLE node_groups ADD COLUMN health_successes integer NOT NULL DEFAULT 2 CHECK(health_successes BETWEEN 1 AND 20);
+ALTER TABLE node_group_members ADD COLUMN role text NOT NULL DEFAULT 'active' CHECK(role IN ('active','standby','disabled'));
+ALTER TABLE node_group_members ADD CHECK(weight<=1000);
+ALTER TABLE rules ADD COLUMN egress_group_id bigint REFERENCES node_groups(id);
+ALTER TABLE rules ADD CHECK(egress_node_id IS NULL OR egress_group_id IS NULL);
+CREATE INDEX rules_egress_group ON rules(egress_group_id) WHERE egress_group_id IS NOT NULL;
+-- The same authorization projection is used for control distribution and group validation.
+CREATE VIEW rule_outbound_routes AS
+ SELECT r.id AS rule_id,n.id AS egress_node_id,1 AS weight,'active'::text AS role
+ FROM rules r JOIN nodes n ON n.id=r.egress_node_id AND n.enabled AND n.tunnel_exit_enabled
+ JOIN node_tunnel_links l ON l.ingress_node_id=r.node_id AND l.egress_node_id=n.id
+ JOIN user_nodes a ON a.user_id=r.user_id AND a.node_id=n.id
+ WHERE n.id<>r.node_id AND (r.protocol='udp' OR n.tunnel_protocol NOT IN ('plain_udp','dtls_udp'))
  UNION ALL
- SELECT r.id,m.node_id FROM rules r JOIN node_group_members m ON m.group_id=r.ingress_group_id
- JOIN nodes n ON n.id=m.node_id AND n.ingress_enabled;
-CREATE OR REPLACE FUNCTION reserve_rule_ports() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
- DELETE FROM rule_ports WHERE rule_id=NEW.id;
- IF NEW.tls_inbound_id IS NULL THEN
-  INSERT INTO rule_ports(node_id,protocol,listen_port,rule_id)
-   SELECT node_id,NEW.protocol,NEW.listen_port,NEW.id FROM rule_ingress_nodes WHERE rule_id=NEW.id;
- END IF;
- INSERT INTO rule_usage(node_id,rule_id,user_id)
-  SELECT node_id,NEW.id,NEW.user_id FROM rule_ingress_nodes WHERE rule_id=NEW.id ON CONFLICT DO NOTHING;
- RETURN NEW;
-END $$;
-DROP TRIGGER reserve_rule_ports ON rules;
-CREATE TRIGGER reserve_rule_ports AFTER INSERT OR UPDATE OF node_id,ingress_group_id,listen_port,protocol,tls_inbound_id ON rules
- FOR EACH ROW EXECUTE FUNCTION reserve_rule_ports();
-CREATE FUNCTION refresh_group_rule_ports() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
- IF TG_TABLE_NAME='nodes' THEN
-  UPDATE rules SET ingress_group_id=ingress_group_id,config_revision=(SELECT value+1 FROM revision WHERE id=1)
-   WHERE ingress_group_id IN (SELECT group_id FROM node_group_members WHERE node_id=NEW.id);
- ELSE
-  UPDATE rules SET ingress_group_id=ingress_group_id,config_revision=(SELECT value+1 FROM revision WHERE id=1)
-   WHERE ingress_group_id=CASE WHEN TG_OP='DELETE' THEN OLD.group_id ELSE NEW.group_id END;
- END IF;
- RETURN NULL;
-END $$;
-CREATE TRIGGER refresh_group_rule_ports AFTER INSERT OR DELETE ON node_group_members
- FOR EACH ROW EXECUTE FUNCTION refresh_group_rule_ports();
-CREATE TRIGGER refresh_node_group_rule_ports AFTER UPDATE OF ingress_enabled ON nodes
- FOR EACH ROW WHEN (OLD.ingress_enabled IS DISTINCT FROM NEW.ingress_enabled) EXECUTE FUNCTION refresh_group_rule_ports();
-UPDATE revision SET value=value+1 WHERE id=1;
+ SELECT r.id,n.id,m.weight,m.role
+ FROM rules r JOIN user_node_groups ug ON ug.user_id=r.user_id AND ug.group_id=r.egress_group_id
+ JOIN node_groups g ON g.id=ug.group_id AND g.enabled
+ JOIN node_group_members m ON m.group_id=g.id AND m.role<>'disabled'
+ JOIN nodes n ON n.id=m.node_id AND n.enabled AND n.tunnel_exit_enabled AND n.id<>r.node_id
+ JOIN node_tunnel_links l ON l.ingress_node_id=r.node_id AND l.egress_node_id=n.id
+ JOIN user_nodes a ON a.user_id=r.user_id AND a.node_id=n.id
+ WHERE r.protocol='udp' OR n.tunnel_protocol NOT IN ('plain_udp','dtls_udp');
+UPDATE revision SET value=value+1;
 INSERT INTO schema_version VALUES(29);

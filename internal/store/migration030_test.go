@@ -39,7 +39,7 @@ func TestGroupBindingMigrationPreservesSingleNodeRulesAndUsage(t *testing.T) {
 	name := fmt.Sprintf("group_migration_%d", time.Now().UnixNano())
 	exec("CREATE SCHEMA " + name)
 	exec("SET LOCAL search_path TO " + name)
-	for _, sql := range []string{schema, migration002, migration003, migration004, migration005, migration006, migration007, migration008, migration009, migration010, migration011, migration012, migration013, migration014, migration015, migration016, migration017, migration018, migration019, migration020, migration021, migration022, migration023, migration024, migration025, migration026, migration027, migration028} {
+	for _, sql := range []string{schema, migration002, migration003, migration004, migration005, migration006, migration007, migration008, migration009, migration010, migration011, migration012, migration013, migration014, migration015, migration016, migration017, migration018, migration019, migration020, migration021, migration022, migration023, migration024, migration025, migration026, migration027, migration028, migration029} {
 		exec(sql)
 	}
 	exec(`INSERT INTO users(id,username,password_hash) VALUES(1,'migration@example.test','fixture');
@@ -49,7 +49,7 @@ func TestGroupBindingMigrationPreservesSingleNodeRulesAndUsage(t *testing.T) {
  INSERT INTO node_groups(id,name) VALUES(1,'fixture-group');
  INSERT INTO node_group_members(group_id,node_id) VALUES(1,1);`)
 	exec("SET CONSTRAINTS ALL IMMEDIATE")
-	exec(migration029)
+	exec(migration030)
 	var node, traffic int64
 	var group *int64
 	var port, instances int
