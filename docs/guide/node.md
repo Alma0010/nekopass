@@ -80,14 +80,6 @@ sudo nekopassctl agent update
 
 无需克隆仓库。在节点服务器上使用下面的命令，从本 fork 的最新正式 Release 下载脚本后执行。仓库需先发布包含 `uninstall-agent.sh` 的版本；发布步骤见 [发布与文档部署](./publishing.md)。
 
-### 预览卸载范围
-
-只列出将清理的服务和文件，不修改系统：
-
-```bash
-wget https://github.com/Alma0010/nekopass/releases/latest/download/uninstall-agent.sh -O uninstall-agent.sh && sudo bash uninstall-agent.sh --dry-run
-```
-
 ### 完整卸载所有节点（默认）
 
 ```bash
@@ -102,11 +94,7 @@ wget https://github.com/Alma0010/nekopass/releases/latest/download/uninstall-age
 wget https://github.com/Alma0010/nekopass/releases/latest/download/uninstall-agent.sh -O uninstall-agent.sh && sudo bash uninstall-agent.sh --service-name nekopass-agent-hk1
 ```
 
-服务名也可带 `.service`。预览单个节点的卸载范围时，将两个参数一起使用：
-
-```bash
-wget https://github.com/Alma0010/nekopass/releases/latest/download/uninstall-agent.sh -O uninstall-agent.sh && sudo bash uninstall-agent.sh --service-name nekopass-agent-hk1 --dry-run
-```
+服务名也可带 `.service`。
 
 默认节点的服务名是 `nekopass-agent`，只卸载默认节点时同样使用 `--service-name nekopass-agent`。
 

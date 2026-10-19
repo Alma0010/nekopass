@@ -59,7 +59,7 @@ git push origin v0.19.1
 wget https://github.com/Alma0010/nekopass/releases/latest/download/uninstall-agent.sh -O uninstall-agent.sh && sudo bash uninstall-agent.sh
 ```
 
-指定服务名和预览命令见 [卸载节点](./node.md#卸载节点)。
+指定服务名卸载的用法见 [卸载节点](./node.md#卸载节点)。
 
 ## 部署 GitHub Pages 文档站
 

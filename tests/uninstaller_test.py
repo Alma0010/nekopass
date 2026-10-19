@@ -120,13 +120,6 @@ class UninstallerTests(unittest.TestCase):
         self.services.clear()
         self.run_uninstall()
 
-    def test_dry_run_lists_all_targets_without_stopping_or_deleting(self):
-        self.install('nekopass-agent-hk1')
-        output = self.run_uninstall('--dry-run')
-        self.assertIn('nekopass-agent-hk1', output)
-        self.assertTrue((self.root / 'var/lib/nekopass-agent-hk1/state.db').exists())
-        self.assertTrue(all(call[1] in ['show', 'list-unit-files'] for call in self.calls))
-
     def test_invalid_names_fail_before_any_system_operation(self):
         for name in ['nekopass', '../nekopass-agent', 'nekopass-agent-hk1;id', 'nekopass-agent-abc/def', 'nekopass-agent-' + 'a' * 17]:
             with self.assertRaises(ValueError):

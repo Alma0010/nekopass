@@ -164,7 +164,6 @@ def remove_user(service):
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='uninstall-agent.sh', description='卸载本机 Nekopass 节点。默认完整卸载所有节点及其配置、状态、更新服务和专用账户；不删除面板或数据库。')
     parser.add_argument('--service-name', '-s', help='仅卸载指定节点，例如 nekopass-agent-hk1（可带 .service）')
-    parser.add_argument('--dry-run', action='store_true', help='只列出卸载范围，不修改系统')
     args = parser.parse_args(argv)
     requested = valid_service(args.service_name) if args.service_name else None
     if not sys.platform.startswith('linux'):
@@ -197,7 +196,7 @@ def main(argv=None):
     if not services:
         log('没有发现已安装的节点；检查孤立的共享管理脚本。')
     for service, items in plans.items():
-        log(('预览卸载：' if args.dry_run else '卸载节点：') + service)
+        log('卸载节点：' + service)
         for item in items:
             if item.exists() or item.is_symlink():
                 log('删除 ' + str(item))
@@ -206,9 +205,6 @@ def main(argv=None):
     for item in shared:
         if item.exists():
             log('删除 ' + str(item))
-    if args.dry_run:
-        log('预览完成，未修改系统。')
-        return 0
     # Stop all update watchers before acquiring their locks. Otherwise an updater
     # could replace files or restart a node while it is being uninstalled.
     for service in services:

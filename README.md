@@ -61,15 +61,14 @@ wget https://github.com/Alma0010/nekopass/releases/latest/download/install-panel
 
 ## 卸载节点
 
-默认完整卸载本机全部节点（含独立命名的节点）、配置、状态数据、更新服务和专用账户，保留面板及数据库。只卸载一个节点时指定服务名；可先用 `--dry-run` 查看范围。
+默认完整卸载本机全部节点（含独立命名的节点）、配置、状态数据、更新服务和专用账户，保留面板及数据库。只卸载一个节点时指定服务名。
 
 ```bash
-wget https://github.com/Alma0010/nekopass/releases/latest/download/uninstall-agent.sh -O uninstall-agent.sh && sudo bash uninstall-agent.sh --dry-run
 wget https://github.com/Alma0010/nekopass/releases/latest/download/uninstall-agent.sh -O uninstall-agent.sh && sudo bash uninstall-agent.sh
 wget https://github.com/Alma0010/nekopass/releases/latest/download/uninstall-agent.sh -O uninstall-agent.sh && sudo bash uninstall-agent.sh --service-name nekopass-agent-hk1
 ```
 
-以上命令依次为预览、完整卸载、卸载指定节点，按需选择一条执行。需要先发布包含 `uninstall-agent.sh` 的正式 Release。卸载不会自动删除面板中的节点记录。
+以上命令依次为完整卸载、卸载指定节点，按需选择一条执行。需要先发布包含 `uninstall-agent.sh` 的正式 Release。卸载不会自动删除面板中的节点记录。
 
 ## 服务管理
 
