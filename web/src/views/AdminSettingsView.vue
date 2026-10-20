@@ -173,10 +173,6 @@ async function copyKey(){try{await copyText(shownKey.value);ElMessage.success('�
           </div>
         </el-tab-pane>
       </el-tabs>
-      <div class="settings-footer">
-        <el-button type="primary" :loading="busy" @click="save">保存设置</el-button>
-        <span class="field-tip">保存所有栏目中的修改</span>
-      </div>
     </section>
     <el-dialog v-model="keyDialog" title="保存管理 API 密钥" width="600px" @closed="shownKey=''" ><p>只显示这一次，请保存到自己的密钥管理工具中。</p>
     <el-input :model-value="shownKey" type="textarea" :rows="3" readonly /><template #footer><el-button type="primary" @click="copyKey">复制密钥</el-button></template></el-dialog>
@@ -205,17 +201,9 @@ async function copyKey(){try{await copyText(shownKey.value);ElMessage.success('�
 }
 .settings-tabs :deep(.el-tabs__nav-prev),
 .settings-tabs :deep(.el-tabs__nav-next) { line-height: 38px; }
-.settings-footer {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 18px 24px;
-  border-top: 1px solid var(--border);
-}
-.settings-footer .field-tip { margin: 0; }
 @media (max-width: 600px) {
   .settings-tabs :deep(.el-tabs__header) { padding: 10px 14px; }
   .settings-tabs :deep(.el-tabs__item) { padding: 0 13px !important; }
-  .settings-form, .settings-footer { padding: 18px 16px; }
+  .settings-form { padding: 18px 16px; }
 }
 </style>

@@ -176,7 +176,6 @@ a { color: inherit; text-decoration: none; }
 .el-button.is-link:hover { text-decoration: underline; }
 .el-button--danger.is-link, .danger { font-weight: 600; }
 .el-tag { border-radius: 4px; }
-.brand-logo { filter: grayscale(1); }
 .el-input-number { border-radius: 6px; overflow: hidden; }
 .account-button { border-color: var(--el-border-color); }
 .account-divider { border-color: var(--el-border-color); }
