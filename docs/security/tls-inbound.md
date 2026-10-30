@@ -25,7 +25,8 @@
 
 - 有效的 TLS ClientHello 若被 SNI 策略拒绝，返回标准的 `unrecognized_name` 致命告警后关闭连接，与 Nginx 的 `ssl_reject_handshake on` 使用相同告警；不返回 HTTP 页面或节点证书。暂停、停用或额度受限的规则也不会借此落入其他用户的默认规则。
 - 误发到 TLS 端口的明文 HTTP/1.0、HTTP/1.1 请求，返回带 `Server: nginx` 的 `400 Bad Request` 页面。HEAD 只返回响应头；页面不回显请求中的域名、路径或其他内容。
-- 畸形、超大、超时或超过并发限制的请求仍直接关闭。HTTP 请求头最多读取 16 KiB，并沿用 ClientHello 的超时与并发限制。
+- 缺少 HTTP/1.1 Host、重复 Host、无效请求头或明文 HTTP/2 前言，返回普通的 Nginx `400 Bad Request` 页面；普通无冒号标头按 Nginx 的空值标头处理。请求行过长返回 `414 Request-URI Too Large`，请求头过长返回带 `Request Header Or Cookie Too Large` 的 400 页面。HEAD 错误回应同样只返回响应头。
+- 请求行及单个标头行须小于 8 KiB，整个请求头读取预算为 32 KiB，与 Nginx 默认 `large_client_header_buffers 4 8k` 的容量一致；不读取请求体，并沿用 ClientHello 的超时与并发限制。不完整、超时、超过并发限制或无法识别为 HTTP/TLS 的请求仍直接关闭。
 
 Nginx 的 `444` 表示不发送响应头就关闭连接，因此没有可同时发送的 `444` 状态行或 `Server: nginx` 标识。尚未完成 TLS 握手时，也不能将明文 HTTP 响应塞进 TLS 连接。参见 [Nginx return](https://nginx.org/en/docs/http/ngx_http_rewrite_module.html#return) 和 [Nginx ssl_reject_handshake](https://nginx.org/en/docs/http/ngx_http_ssl_module.html#ssl_reject_handshake)。
 

@@ -234,7 +234,7 @@ func (e *Engine) serveTLSInbound(l *tlsInboundListener, raw net.Conn, peer strin
 	if err != nil {
 		return
 	}
-	if first[0] >= 'A' && first[0] <= 'Z' {
+	if (first[0] >= 'A' && first[0] <= 'Z') || (first[0] >= 'a' && first[0] <= 'z') {
 		rejectPlainHTTPOnTLS(client, reader)
 		return
 	}
