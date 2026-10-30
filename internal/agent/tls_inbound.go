@@ -227,12 +227,29 @@ func (e *Engine) serveTLSInbound(l *tlsInboundListener, raw net.Conn, peer strin
 	if err != nil {
 		return
 	}
+	// Preserve peeked bytes for both fragmented handshakes and buffered data
+	// following ClientHello, including when PROXY Protocol already buffered it.
+	reader := bufio.NewReader(client)
+	first, err := reader.Peek(1)
+	if err != nil {
+		return
+	}
+	if first[0] >= 'A' && first[0] <= 'Z' {
+		rejectPlainHTTPOnTLS(client, reader)
+		return
+	}
+	client = &bufferedConn{Conn: client, reader: reader}
 	name, prefix, err := tlsinbound.ReadClientHello(client)
-	if err != nil || name == "" && cfg.RejectEmptySni {
+	if err != nil {
+		return
+	}
+	if name == "" && cfg.RejectEmptySni {
+		rejectTLSInbound(client)
 		return
 	}
 	allow := tlsinbound.Config{AllowedSNI: cfg.AllowedSni}
 	if name != "" && !allow.Allows(name) {
+		rejectTLSInbound(client)
 		return
 	}
 	selected := snapshot.names[name]
@@ -241,10 +258,12 @@ func (e *Engine) serveTLSInbound(l *tlsInboundListener, raw net.Conn, peer strin
 		selected = snapshot.routes[cfg.DefaultRuleId]
 	}
 	if selected == nil || selected.l.ctx.Err() != nil || !selected.account.acquire() {
+		rejectTLSInbound(client)
 		return
 	}
 	defer selected.account.active.Add(-1)
 	if !selected.l.runtime.open() {
+		rejectTLSInbound(client)
 		return
 	}
 	defer selected.l.runtime.close()

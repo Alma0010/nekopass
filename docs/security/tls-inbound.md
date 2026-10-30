@@ -19,6 +19,18 @@
 
 同一节点的共享入口、普通 TCP 规则及 TCP 隧道监听不能占用同一端口。同一共享入口的 SNI 不可重复，暂停规则仍保留其 SNI。
 
+## 拒绝行为
+
+共享入口采用 Nginx 样式的拒绝回应，需要更新节点端后生效：
+
+- 有效的 TLS ClientHello 若被 SNI 策略拒绝，返回标准的 `unrecognized_name` 致命告警后关闭连接，与 Nginx 的 `ssl_reject_handshake on` 使用相同告警；不返回 HTTP 页面或节点证书。暂停、停用或额度受限的规则也不会借此落入其他用户的默认规则。
+- 误发到 TLS 端口的明文 HTTP/1.0、HTTP/1.1 请求，返回带 `Server: nginx` 的 `400 Bad Request` 页面。HEAD 只返回响应头；页面不回显请求中的域名、路径或其他内容。
+- 畸形、超大、超时或超过并发限制的请求仍直接关闭。HTTP 请求头最多读取 16 KiB，并沿用 ClientHello 的超时与并发限制。
+
+Nginx 的 `444` 表示不发送响应头就关闭连接，因此没有可同时发送的 `444` 状态行或 `Server: nginx` 标识。尚未完成 TLS 握手时，也不能将明文 HTTP 响应塞进 TLS 连接。参见 [Nginx return](https://nginx.org/en/docs/http/ngx_http_rewrite_module.html#return) 和 [Nginx ssl_reject_handshake](https://nginx.org/en/docs/http/ngx_http_ssl_module.html#ssl_reject_handshake)。
+
+此处只调整拒绝回应，不保证与真实 Nginx 的所有网络指纹一致，也不提供客户端身份认证或重放拦截。匹配成功的 TLS 连接仍完整透传；AnyTLS 等后端的认证失败处理由后端负责。
+
 ## 用户创建规则
 
 在「转发规则」选择 TCP、入口和出口，将「入站方式」设为「共享 TLS 入站」，选择共享入口并填写 SNI 域名，一行一个。目标填写实际提供 TLS 服务的地址与端口，监听端口使用管理员配置的共享端口。

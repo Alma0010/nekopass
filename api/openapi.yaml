@@ -1556,7 +1556,7 @@ components:
         proxy_accept: {type: string, enum: ['off', auto], default: 'off', description: 'auto requires a trusted PROXY header before TLS; administered for the shared listener'}
         allowed_sni: {type: array, maxItems: 128, items: {type: string}, description: 'Domain suffix allowlist; empty permits all names'}
         reject_empty_sni: {type: boolean, default: true}
-        unknown_sni_action: {type: string, enum: [reject, default_rule], default: reject}
+        unknown_sni_action: {type: string, enum: [reject, default_rule], default: reject, description: 'Rejected valid ClientHellos receive a fatal unrecognized_name TLS alert, as with nginx ssl_reject_handshake. Plaintext HTTP/1 requests to this TLS port receive a 400 page with Server nginx; this is not an HTTP 444 response or an anti-replay mechanism. Requires an updated Agent.'}
         default_rule_id: {type: integer, format: int64, minimum: 0, description: 'An administrator-owned child of this listener; used only for default_rule'}
         max_handshakes: {type: integer, minimum: 1, maximum: 4096, default: 128, description: 'Concurrent ClientHello readers per listener; released after classification. Each TCP peer additionally limited to 16'}
         handshake_timeout_seconds: {type: integer, minimum: 1, maximum: 30, default: 5}
