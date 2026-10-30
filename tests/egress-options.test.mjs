@@ -28,5 +28,6 @@ test('both group bindings survive a native backup and imports stay one rule',()=
  assert.equal(rule.ingress_group_id,42);assert.equal(rule.egress_group_id,11)
  const restored=prepareRuleImport(parseRuleImport(JSON.stringify({rules:[rule]})),{userID:9,nodeID:0,egressNodeID:0,groupID:0,trustedCIDRs:[],randomPorts:false})
  assert.equal(restored.length,1);assert.equal(restored[0].ingress_group_id,42);assert.equal(restored[0].egress_group_id,11)
- assert.throws(()=>encodeNyanpassRules(restored),/完整备份/)
+ const compatible=JSON.parse(encodeNyanpassRules(restored).trim())
+ assert.deepEqual(compatible,{dest:['example.com:443'],listen_port:24005,name:'both groups'})
 })

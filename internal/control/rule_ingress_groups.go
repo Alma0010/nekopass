@@ -2,11 +2,13 @@ package control
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/nekopass/nekopass/internal/tlsinbound"
 )
 
 // Resolve the binding, not the union of other groups that authorize its members.
@@ -33,8 +35,8 @@ func ruleIngressIDs(ctx context.Context, tx pgx.Tx, in RuleInput) ([]int64, erro
 }
 
 func validateRuleIngress(ctx context.Context, tx pgx.Tx, in RuleInput, ruleID, node int64) error {
-	var enabled, ingress, direct bool
-	if err := tx.QueryRow(ctx, `SELECT enabled,ingress_enabled,allow_direct FROM nodes WHERE id=$1`, node).Scan(&enabled, &ingress, &direct); err != nil {
+	var enabled, ingress, direct, denyUDP bool
+	if err := tx.QueryRow(ctx, `SELECT enabled,ingress_enabled,allow_direct,deny_udp_ingress_creation FROM nodes WHERE id=$1`, node).Scan(&enabled, &ingress, &direct, &denyUDP); err != nil {
 		return err
 	}
 	// Disabled group members retain reservations and rejoin when enabled.
@@ -50,9 +52,20 @@ func validateRuleIngress(ctx context.Context, tx pgx.Tx, in RuleInput, ruleID, n
 	if !ingress {
 		return errors.New("此节点未启用入口功能")
 	}
+	if denyUDP && in.Protocol == "udp" {
+		var existing bool
+		if ruleID != 0 {
+			if err := tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM rules r JOIN rule_ingress_nodes ri ON ri.rule_id=r.id WHERE r.id=$1 AND ri.node_id=$2 AND r.protocol='udp')", ruleID, node).Scan(&existing); err != nil {
+				return err
+			}
+		}
+		if !existing {
+			return errors.New("此节点禁止创建新的 UDP 入站规则，请选择其他入口")
+		}
+	}
 	if in.EgressGroupID != 0 {
 		var allowed bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM user_node_groups ug JOIN node_groups g ON g.id=ug.group_id AND g.enabled JOIN node_group_members m ON m.group_id=g.id AND m.role<>'disabled' JOIN nodes n ON n.id=m.node_id AND n.enabled AND n.tunnel_exit_enabled JOIN node_tunnel_links l ON l.egress_node_id=n.id AND l.ingress_node_id=$2 JOIN user_nodes un ON un.node_id=n.id AND un.user_id=$1 WHERE ug.user_id=$1 AND ug.group_id=$3 AND n.id<>$2 AND ($4='udp' OR n.tunnel_protocol NOT IN ('plain_udp','dtls_udp')))`, in.UserID, node, in.EgressGroupID, in.Protocol).Scan(&allowed); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM user_node_groups ug JOIN node_groups g ON g.id=ug.group_id AND g.enabled JOIN node_group_members m ON m.group_id=g.id AND m.role<>'disabled' JOIN nodes n ON n.id=m.node_id AND n.enabled AND n.tunnel_exit_enabled JOIN node_tunnel_links l ON l.egress_node_id=n.id AND l.ingress_node_id=$2 JOIN user_nodes un ON un.node_id=n.id AND un.user_id=$1 WHERE ug.user_id=$1 AND ug.group_id=$3 AND n.id<>$2 AND ($4='udp' OR n.tunnel_protocol NOT IN ('plain_udp','dtls_udp','random_udp')))`, in.UserID, node, in.EgressGroupID, in.Protocol).Scan(&allowed); err != nil {
 			return err
 		}
 		if !allowed {
@@ -88,12 +101,12 @@ func allocateRulePort(ctx context.Context, tx pgx.Tx, in *RuleInput, id int64, n
 		return fmt.Errorf("监听端口须在所有入口的共同范围 %d–%d 内", lo, hi)
 	}
 	if in.ListenPort == 0 {
-		if err := tx.QueryRow(ctx, `SELECT p FROM generate_series($1::integer,$2::integer) p WHERE NOT EXISTS(SELECT 1 FROM rule_ports WHERE node_id=ANY($3) AND listen_port=p AND COALESCE(rule_id,0)<>$4 AND ($5='tcp_udp' OR protocol=$5)) AND NOT EXISTS(SELECT 1 FROM nodes WHERE id=ANY($3) AND tunnel_exit_enabled AND tunnel_listen_port=p AND ($5='tcp_udp' OR CASE WHEN tunnel_protocol IN ('plain_udp','dtls_udp') THEN 'udp' ELSE 'tcp' END=$5)) ORDER BY random() LIMIT 1`, lo, hi, nodes, id, in.Protocol).Scan(&in.ListenPort); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT p FROM generate_series($1::integer,$2::integer) p WHERE NOT EXISTS(SELECT 1 FROM rule_ports WHERE node_id=ANY($3) AND listen_port=p AND COALESCE(rule_id,0)<>$4 AND ($5='tcp_udp' OR protocol=$5)) AND NOT EXISTS(SELECT 1 FROM nodes WHERE id=ANY($3) AND tunnel_exit_enabled AND tunnel_listen_port=p AND ($5='tcp_udp' OR (tunnel_protocol='tls_h3' OR CASE WHEN tunnel_protocol IN ('plain_udp','dtls_udp','random_udp') THEN 'udp' ELSE 'tcp' END=$5))) ORDER BY random() LIMIT 1`, lo, hi, nodes, id, in.Protocol).Scan(&in.ListenPort); err != nil {
 			return errors.New("所有入口之间没有可共同分配的端口")
 		}
 	}
 	var conflict bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM rule_ports WHERE node_id=ANY($1) AND listen_port=$2 AND COALESCE(rule_id,0)<>$3 AND ($4='tcp_udp' OR protocol=$4)) OR EXISTS(SELECT 1 FROM nodes WHERE id=ANY($1) AND tunnel_exit_enabled AND tunnel_listen_port=$2 AND (($4='tcp_udp') OR CASE WHEN tunnel_protocol IN ('plain_udp','dtls_udp') THEN 'udp' ELSE 'tcp' END=$4))`, nodes, in.ListenPort, id, in.Protocol).Scan(&conflict); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM rule_ports WHERE node_id=ANY($1) AND listen_port=$2 AND COALESCE(rule_id,0)<>$3 AND ($4='tcp_udp' OR protocol=$4)) OR EXISTS(SELECT 1 FROM nodes WHERE id=ANY($1) AND tunnel_exit_enabled AND tunnel_listen_port=$2 AND (($4='tcp_udp') OR (tunnel_protocol='tls_h3' OR CASE WHEN tunnel_protocol IN ('plain_udp','dtls_udp','random_udp') THEN 'udp' ELSE 'tcp' END=$4)))`, nodes, in.ListenPort, id, in.Protocol).Scan(&conflict); err != nil {
 		return err
 	}
 	if conflict {
@@ -105,7 +118,7 @@ func allocateRulePort(ctx context.Context, tx pgx.Tx, in *RuleInput, id int64, n
 // Recheck after node/group edits, once links and membership have both been saved.
 func validateGroupRuleTopology(ctx context.Context, tx pgx.Tx) error {
 	var invalid bool
-	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM rules r JOIN rule_ingress_nodes ri ON ri.rule_id=r.id JOIN nodes n ON n.id=ri.node_id LEFT JOIN nodes en ON en.id=r.egress_node_id WHERE r.ingress_group_id IS NOT NULL AND (r.listen_port NOT BETWEEN n.port_min AND n.port_max OR (r.protocol='tcp' AND n.tls_inbound_only) OR (r.egress_node_id IS NULL AND r.egress_group_id IS NULL AND NOT n.allow_direct) OR (r.egress_node_id IS NOT NULL AND (n.id=en.id OR NOT en.tunnel_exit_enabled OR NOT EXISTS(SELECT 1 FROM node_tunnel_links l WHERE l.ingress_node_id=n.id AND l.egress_node_id=en.id) OR (r.protocol<>'udp' AND en.tunnel_protocol IN ('plain_udp','dtls_udp')))) OR (n.tunnel_exit_enabled AND n.tunnel_listen_port=r.listen_port AND CASE WHEN n.tunnel_protocol IN ('plain_udp','dtls_udp') THEN 'udp' ELSE 'tcp' END=r.protocol)))`).Scan(&invalid)
+	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM rules r JOIN rule_ingress_nodes ri ON ri.rule_id=r.id JOIN nodes n ON n.id=ri.node_id LEFT JOIN nodes en ON en.id=r.egress_node_id WHERE r.ingress_group_id IS NOT NULL AND ((r.tls_inbound_port IS NULL AND (r.listen_port NOT BETWEEN n.port_min AND n.port_max OR (r.protocol='tcp' AND n.tls_inbound_only))) OR (r.egress_node_id IS NULL AND r.egress_group_id IS NULL AND NOT n.allow_direct) OR (r.egress_node_id IS NOT NULL AND (n.id=en.id OR NOT en.tunnel_exit_enabled OR NOT EXISTS(SELECT 1 FROM node_tunnel_links l WHERE l.ingress_node_id=n.id AND l.egress_node_id=en.id) OR (r.protocol<>'udp' AND en.tunnel_protocol IN ('plain_udp','dtls_udp','random_udp')))) OR (r.tls_inbound_port IS NULL AND n.tunnel_exit_enabled AND n.tunnel_listen_port=r.listen_port AND (n.tunnel_protocol='tls_h3' OR CASE WHEN n.tunnel_protocol IN ('plain_udp','dtls_udp','random_udp') THEN 'udp' ELSE 'tcp' END=r.protocol))))`).Scan(&invalid)
 	if err != nil {
 		return err
 	}
@@ -117,6 +130,39 @@ func validateGroupRuleTopology(ctx context.Context, tx pgx.Tx) error {
 
 func (s *Server) ruleNodeGroups(w http.ResponseWriter, r *http.Request) {
 	u := ruleActor(r)
-	rows, err := s.Pool.Query(r.Context(), `SELECT g.id,g.name,g.description,g.enabled,g.sort_order,g.strategy,COALESCE((SELECT array_agg(n.id ORDER BY n.id) FROM node_group_members m JOIN nodes n ON n.id=m.node_id AND n.ingress_enabled WHERE m.group_id=g.id AND m.role<>'disabled'),'{}') AS node_ids,COALESCE((SELECT jsonb_agg(jsonb_build_object('id',n.id,'name',n.name,'allow_direct',n.allow_direct,'port_min',n.port_min,'port_max',n.port_max,'enabled',n.enabled,'tls_inbound_only',n.tls_inbound_only) ORDER BY n.id) FROM node_group_members m JOIN nodes n ON n.id=m.node_id AND n.ingress_enabled WHERE m.group_id=g.id AND m.role<>'disabled'),'[]') AS members FROM node_groups g JOIN user_node_groups ug ON ug.group_id=g.id WHERE ug.user_id=$1 AND g.enabled ORDER BY g.sort_order,g.id`, u.ID)
+	rows, err := s.Pool.Query(r.Context(), `SELECT g.id,g.name,g.description,g.enabled,g.sort_order,g.strategy,COALESCE((SELECT array_agg(n.id ORDER BY n.id) FROM node_group_members m JOIN nodes n ON n.id=m.node_id AND n.ingress_enabled WHERE m.group_id=g.id AND m.role<>'disabled'),'{}') AS node_ids,COALESCE((SELECT jsonb_agg(jsonb_build_object('id',n.id,'name',n.name,'allow_direct',n.allow_direct,'port_min',n.port_min,'port_max',n.port_max,'enabled',n.enabled,'tls_inbound_only',n.tls_inbound_only,'deny_udp_ingress_creation',n.deny_udp_ingress_creation) ORDER BY n.id) FROM node_group_members m JOIN nodes n ON n.id=m.node_id AND n.ingress_enabled WHERE m.group_id=g.id AND m.role<>'disabled'),'[]') AS members FROM node_groups g JOIN user_node_groups ug ON ug.group_id=g.id WHERE ug.user_id=$1 AND g.enabled ORDER BY g.sort_order,g.id`, u.ID)
 	s.sendRows(w, rows, err)
+}
+
+// Check every member, including disabled members which retain their reservations.
+func validateGroupTLSRules(ctx context.Context, tx pgx.Tx) error {
+	rows, err := tx.Query(ctx, `SELECT r.id,ri.node_id,r.sni_names,t.config FROM rules r JOIN rule_ingress_nodes ri ON ri.rule_id=r.id LEFT JOIN node_tls_inbounds t ON t.node_id=ri.node_id AND t.port=r.tls_inbound_port WHERE r.tls_inbound_port IS NOT NULL`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, node int64
+		var names, raw []byte
+		if err = rows.Scan(&id, &node, &names, &raw); err != nil {
+			return err
+		}
+		if len(raw) == 0 {
+			return fmt.Errorf("节点组规则 #%d 的入口 #%d 缺少对应端口的共享 TLS 入口", id, node)
+		}
+		var cfg tlsinbound.Config
+		var sni []string
+		if err = json.Unmarshal(raw, &cfg); err != nil {
+			return err
+		}
+		if err = json.Unmarshal(names, &sni); err != nil {
+			return err
+		}
+		for _, name := range sni {
+			if !cfg.Allows(name) {
+				return fmt.Errorf("节点组规则 #%d 的 SNI 不在入口 #%d 的允许范围内", id, node)
+			}
+		}
+	}
+	return rows.Err()
 }

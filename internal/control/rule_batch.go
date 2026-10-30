@@ -38,7 +38,7 @@ func (p *RuleBatchPatch) validate() error {
 
 func (p *RuleBatchPatch) apply(in *RuleInput) error {
 	if p.IngressGroupID != nil && *p.IngressGroupID != in.IngressGroupID {
-		if in.TLSInboundID != 0 {
+		if in.TLSInboundID != 0 || in.TLSInboundPort != 0 {
 			return errors.New("共享 TLS 规则不能批量切换到节点组")
 		}
 		in.NodeID = 0
@@ -46,7 +46,7 @@ func (p *RuleBatchPatch) apply(in *RuleInput) error {
 		in.ListenPort = 0
 	}
 	if p.NodeID != nil && (*p.NodeID != in.NodeID || in.IngressGroupID != 0) {
-		if in.TLSInboundID != 0 {
+		if in.TLSInboundID != 0 || in.TLSInboundPort != 0 {
 			return errors.New("共享 TLS 规则切换入口时，请逐条编辑并选择新节点的共享 TLS 入口")
 		}
 		in.NodeID = *p.NodeID
@@ -67,7 +67,7 @@ func (p *RuleBatchPatch) apply(in *RuleInput) error {
 		in.Balance = *p.Balance
 	}
 	if p.ProxyAcceptEnabled != nil {
-		if in.TLSInboundID != 0 {
+		if in.TLSInboundID != 0 || in.TLSInboundPort != 0 {
 			return errors.New("共享 TLS 入站的 Proxy Protocol 接收由管理员配置")
 		}
 		if !*p.ProxyAcceptEnabled {

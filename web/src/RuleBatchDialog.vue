@@ -17,9 +17,10 @@ const form=reactive<RuleBatchPatch>({})
 const advanced=ref<string[]>([])
 watch(()=>props.modelValue,open=>{if(open){for(const key of Object.keys(form) as (keyof RuleBatchPatch)[])delete form[key];advanced.value=[]}})
 function clearField(key:keyof RuleBatchPatch){delete form[key]}
-const hasSharedTLS=computed(()=>props.rules.some(r=>!!r.tls_inbound_id))
+const hasSharedTLS=computed(()=>props.rules.some(r=>!!r.tls_inbound_id||!!r.tls_inbound_port))
 const hasUDP=computed(()=>props.rules.some(r=>r.protocol==='udp'))
 const ingressNodes=computed(()=>props.nodes.filter(n=>n.ingress_enabled))
+function udpIngressAllowed(node:{id:number;deny_udp_ingress_creation?:boolean}){return !node.deny_udp_ingress_creation||props.rules.every(r=>r.protocol!=='udp'||r.node_id===node.id||!!r.ingress_nodes?.some(n=>n.node_id===node.id))}
 const ingressChoice=computed({get:()=>form.ingress_group_id?'g:'+form.ingress_group_id:form.node_id?'n:'+form.node_id:undefined,set:(value:string|undefined)=>{delete form.node_id;delete form.ingress_group_id;if(value){const [kind,id]=value.split(':');if(kind==='g')form.ingress_group_id=Number(id);else form.node_id=Number(id)}}})
 
 const exitChoices=computed(()=>{
@@ -35,6 +36,8 @@ const selectedEgress=computed({get:()=>form.egress_node_id==null&&form.egress_gr
 watch(exitChoices,()=>{if(selectedEgress.value&&!exitChoices.value.some(o=>o.value===selectedEgress.value))selectedEgress.value=undefined})
 function submit(){
  if(props.busy)return
+ if(form.node_id&&ingressNodes.value.some(n=>n.id===form.node_id&&!udpIngressAllowed(n))){ElMessage.warning('所选入口禁止创建新的 UDP 入站规则');return}
+ if(form.ingress_group_id&&props.nodeGroups?.find(g=>g.id===form.ingress_group_id)?.members.some(n=>!udpIngressAllowed(n))){ElMessage.warning('所选入口组有节点禁止创建新的 UDP 入站规则');return}
  const patch:RuleBatchPatch={}
  for(const key of ['node_id','ingress_group_id','egress_node_id','egress_group_id','balance','proxy_accept_enabled','proxy_send_enabled'] as const){
   const value=form[key]
@@ -51,7 +54,7 @@ function submit(){
   <el-form label-position="top" :disabled="busy" @submit.prevent="submit">
    <el-form-item label="入口（留空不更新）">
     <el-select v-model="ingressChoice" clearable placeholder="保持原入口" :disabled="hasSharedTLS" data-testid="batch-rule-ingress">
-     <el-option-group v-if="nodeGroups?.length" label="节点组"><el-option v-for="g in nodeGroups" :key="g.id" :label="g.name+' · 节点组'" :value="'g:'+g.id" :disabled="!g.node_ids.length"/></el-option-group><el-option-group label="单节点"><el-option v-for="n in ingressNodes" :key="n.id" :label="n.name" :value="'n:'+n.id"/></el-option-group>
+     <el-option-group v-if="nodeGroups?.length" label="节点组"><el-option v-for="g in nodeGroups" :key="g.id" :label="g.name+' · 节点组'" :value="'g:'+g.id" :disabled="!g.node_ids.length||g.members.some(n=>!udpIngressAllowed(n))"/></el-option-group><el-option-group label="单节点"><el-option v-for="n in ingressNodes" :key="n.id" :label="n.name+(!udpIngressAllowed(n)?'（禁止新增 UDP 入站）':'')" :value="'n:'+n.id" :disabled="!udpIngressAllowed(n)"/></el-option-group>
     </el-select>
     <span class="field-tip">{{hasSharedTLS?'共享 TLS 规则切换入口时，请逐条选择新节点的共享 TLS 入口。':'更换入口会重新分配监听端口；选择原入口时保留端口。'}}</span>
    </el-form-item>

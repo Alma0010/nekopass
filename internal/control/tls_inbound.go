@@ -25,7 +25,7 @@ func (s *Server) tlsInbounds(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "节点不存在")
 		return
 	}
-	rows, err := s.Pool.Query(r.Context(), `SELECT t.id,t.node_id,t.config,(SELECT count(*) FROM rules WHERE tls_inbound_id=t.id) rule_count FROM node_tls_inbounds t WHERE node_id=$1 ORDER BY t.id`, id)
+	rows, err := s.Pool.Query(r.Context(), `SELECT t.id,t.node_id,t.config,(SELECT count(*) FROM rule_tls_inbounds WHERE tls_inbound_id=t.id) rule_count FROM node_tls_inbounds t WHERE node_id=$1 ORDER BY t.id`, id)
 	if err != nil {
 		s.dbError(w, err)
 		return
@@ -35,7 +35,7 @@ func (s *Server) tlsInbounds(w http.ResponseWriter, r *http.Request) {
 		s.dbError(w, err)
 		return
 	}
-	candidates, err := s.Pool.Query(r.Context(), "SELECT r.id,r.name,r.tls_inbound_id FROM rules r JOIN users u ON u.id=r.user_id WHERE r.node_id=$1 AND u.is_admin AND r.tls_inbound_id IS NOT NULL", id)
+	candidates, err := s.Pool.Query(r.Context(), "SELECT r.id,r.name,rt.tls_inbound_id FROM rules r JOIN users u ON u.id=r.user_id JOIN rule_tls_inbounds rt ON rt.rule_id=r.id WHERE rt.node_id=$1 AND u.is_admin", id)
 	if err != nil {
 		s.dbError(w, err)
 		return
@@ -102,7 +102,7 @@ func (s *Server) saveTLSInbound(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var collision bool
-	err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM nodes WHERE id=$1 AND tunnel_exit_enabled AND tunnel_listen_port=$2 AND tunnel_protocol NOT IN ('plain_udp','dtls_udp')) OR EXISTS(SELECT 1 FROM rule_ports WHERE node_id=$1 AND protocol='tcp' AND listen_port=$2 AND COALESCE(tls_inbound_id,0)<>$3)", node, cfg.Port, in.ID).Scan(&collision)
+	err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM nodes WHERE id=$1 AND tunnel_exit_enabled AND tunnel_listen_port=$2 AND tunnel_protocol NOT IN ('plain_udp','dtls_udp','random_udp')) OR EXISTS(SELECT 1 FROM rule_ports WHERE node_id=$1 AND protocol='tcp' AND listen_port=$2 AND COALESCE(tls_inbound_id,0)<>$3)", node, cfg.Port, in.ID).Scan(&collision)
 	if err != nil {
 		s.dbError(w, err)
 		return
@@ -113,7 +113,7 @@ func (s *Server) saveTLSInbound(w http.ResponseWriter, r *http.Request) {
 	}
 	if cfg.DefaultRuleID != 0 {
 		var valid bool
-		err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM rules r JOIN users u ON u.id=r.user_id WHERE r.id=$1 AND r.node_id=$2 AND r.tls_inbound_id=$3 AND u.is_admin)", cfg.DefaultRuleID, node, in.ID).Scan(&valid)
+		err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM rules r JOIN users u ON u.id=r.user_id JOIN rule_tls_inbounds rt ON rt.rule_id=r.id WHERE r.id=$1 AND rt.node_id=$2 AND rt.tls_inbound_id=$3 AND u.is_admin)", cfg.DefaultRuleID, node, in.ID).Scan(&valid)
 		if err != nil || !valid {
 			fail(w, 400, "默认规则须为当前共享入口下的管理员规则")
 			return
@@ -174,7 +174,7 @@ func (s *Server) saveTLSInbound(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err = finishRules(ctx, tx); err != nil {
-		s.dbError(w, err)
+		fail(w, 400, publicOperationError(err))
 		return
 	}
 	writeJSON(w, 200, map[string]any{"id": in.ID})
@@ -200,7 +200,7 @@ func (s *Server) deleteTLSInbound(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	var count int
-	if err = tx.QueryRow(r.Context(), "SELECT count(*) FROM rules WHERE tls_inbound_id=$1", in.ID).Scan(&count); err != nil {
+	if err = tx.QueryRow(r.Context(), "SELECT count(*) FROM rule_tls_inbounds WHERE tls_inbound_id=$1", in.ID).Scan(&count); err != nil {
 		s.dbError(w, err)
 		return
 	}
@@ -284,7 +284,7 @@ func appendTLSInboundControl(ctx context.Context, tx pgx.Tx, node int64, out *pb
 	if err := tx.QueryRow(ctx, "SELECT tls_inbound_only FROM nodes WHERE id=$1", node).Scan(&out.Node.TlsInboundOnly); err != nil {
 		return err
 	}
-	rows, err := tx.Query(ctx, "SELECT t.id,t.config,COALESCE((SELECT r.id FROM rules r JOIN users u ON u.id=r.user_id WHERE r.id=(t.config->>'default_rule_id')::bigint AND r.tls_inbound_id=t.id AND u.is_admin),0) FROM node_tls_inbounds t WHERE t.node_id=$1 ORDER BY t.id", node)
+	rows, err := tx.Query(ctx, "SELECT t.id,t.config,COALESCE((SELECT r.id FROM rules r JOIN users u ON u.id=r.user_id JOIN rule_tls_inbounds rt ON rt.rule_id=r.id WHERE r.id=(t.config->>'default_rule_id')::bigint AND rt.tls_inbound_id=t.id AND u.is_admin),0) FROM node_tls_inbounds t WHERE t.node_id=$1 ORDER BY t.id", node)
 	if err != nil {
 		return err
 	}
@@ -311,14 +311,14 @@ func validateTLSRule(ctx context.Context, tx pgx.Tx, in *RuleInput, id int64) er
 	if err := tx.QueryRow(ctx, "SELECT tls_inbound_only FROM nodes WHERE id=$1", in.NodeID).Scan(&only); err != nil {
 		return err
 	}
-	if in.TLSInboundID == 0 {
+	if in.TLSInboundID == 0 && in.TLSInboundPort == 0 {
 		if only && in.Protocol == "tcp" {
 			return errors.New("此入口仅允许共享 TLS 入站规则")
 		}
 		return nil
 	}
 	var raw []byte
-	if err := tx.QueryRow(ctx, "SELECT config FROM node_tls_inbounds WHERE id=$1 AND node_id=$2", in.TLSInboundID, in.NodeID).Scan(&raw); err != nil {
+	if err := tx.QueryRow(ctx, "SELECT config FROM node_tls_inbounds WHERE node_id=$2 AND (($3=0 AND id=$1) OR ($3<>0 AND port=$3))", in.TLSInboundID, in.NodeID, in.TLSInboundPort).Scan(&raw); err != nil {
 		return errors.New("共享 TLS 入口不存在或不属于当前节点")
 	}
 	var cfg tlsinbound.Config
@@ -340,6 +340,6 @@ func touchTLSInboundNode(ctx context.Context, tx pgx.Tx, node int64) error {
 	if _, err := tx.Exec(ctx, "UPDATE nodes SET config_revision=(SELECT value+1 FROM revision WHERE id=1) WHERE id=$1", node); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, "UPDATE rules SET config_revision=(SELECT value+1 FROM revision WHERE id=1) WHERE node_id=$1", node)
+	_, err := tx.Exec(ctx, "UPDATE rules SET config_revision=(SELECT value+1 FROM revision WHERE id=1) WHERE id IN (SELECT rule_id FROM rule_ingress_nodes WHERE node_id=$1)", node)
 	return err
 }

@@ -22,6 +22,16 @@ sql:
       - internal/store/migration028.sql
       - internal/store/migration029.sql
       - internal/store/migration030.sql
+      - internal/store/metering_compat.sql
+      - internal/store/migration031.sql
+      - internal/store/migration032.sql
+      - internal/store/migration033.sql
+      - internal/store/migration034.sql
+      - internal/store/migration035.sql
+      - internal/store/migration036.sql
+      - internal/store/migration037.sql
+      - internal/store/migration038.sql
+      - internal/store/migration039.sql
     gen:
       go:
         package: store

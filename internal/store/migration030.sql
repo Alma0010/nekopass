@@ -45,7 +45,7 @@ DROP TRIGGER IF EXISTS refresh_node_group_rule_ports ON nodes;
 CREATE TRIGGER refresh_node_group_rule_ports AFTER UPDATE OF ingress_enabled ON nodes
  FOR EACH ROW WHEN (OLD.ingress_enabled IS DISTINCT FROM NEW.ingress_enabled) EXECUTE FUNCTION refresh_group_rule_ports();
 UPDATE revision SET value=value+1 WHERE id=1;
-INSERT INTO schema_version VALUES(30);
+INSERT INTO schema_version VALUES(30) ON CONFLICT DO NOTHING;
 
 CREATE OR REPLACE VIEW rule_outbound_routes AS
  SELECT r.id AS rule_id,n.id AS egress_node_id,1 AS weight,'active'::text AS role,ri.node_id AS ingress_node_id
