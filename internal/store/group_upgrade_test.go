@@ -21,7 +21,7 @@ func TestMigrateSupportsOfficialAndForkSchemas(t *testing.T) {
 		t.Fatal("requires isolated *_test database")
 	}
 	ctx := context.Background()
-	for _, kind := range []string{"v0185", "official29", "fork29", "fork30", "official38"} {
+	for _, kind := range []string{"v0185", "official29", "fork29", "fork30", "fork39", "official38", "official39", "official41"} {
 		t.Run(kind, func(t *testing.T) {
 			conn, err := pgx.Connect(ctx, dsn)
 			if err != nil {
@@ -48,14 +48,20 @@ func TestMigrateSupportsOfficialAndForkSchemas(t *testing.T) {
    INSERT INTO node_group_members(group_id,node_id) VALUES(1,1);
    INSERT INTO rules(id,user_id,node_id,listen_port,target_host,target_port,name) VALUES(1,1,1,24001,'target.example.test',443,'existing');
    INSERT INTO rule_usage(node_id,rule_id,user_id,traffic) VALUES(1,1,1,123);`)
-			if kind == "official29" || kind == "fork30" || kind == "official38" {
+			if kind == "official29" || kind == "fork30" || kind == "fork39" || kind == "official38" || kind == "official39" || kind == "official41" {
 				exec(migration029)
 			}
-			if kind == "fork30" {
+			if kind == "fork30" || kind == "fork39" {
 				exec(migration030)
 				exec("UPDATE rules SET node_id=NULL,ingress_group_id=1 WHERE id=1")
 			}
-			if kind == "official38" {
+			if kind == "fork39" {
+				exec(migration030Upstream)
+				for _, sql := range []string{migration031, migration032, migration033, migration034, migration035, migration036, migration037, migration038, migration039} {
+					exec(sql)
+				}
+			}
+			if kind == "official38" || kind == "official39" || kind == "official41" {
 				for _, sql := range []string{migration030Upstream, migration031, migration032, migration033, migration034, migration035, migration036, migration037, migration038} {
 					// The official view has four columns and doesn't depend on ingress groups.
 					if sql == migration032 {
@@ -63,6 +69,13 @@ func TestMigrateSupportsOfficialAndForkSchemas(t *testing.T) {
 					}
 					exec(sql)
 				}
+			}
+			if kind == "official39" || kind == "official41" {
+				exec(`ALTER TABLE nodes ADD COLUMN mux_config jsonb NOT NULL DEFAULT '{"enabled":false,"max_connections":0,"max_streams":128,"idle_timeout_seconds":60}'; INSERT INTO schema_version(version) VALUES (39);`)
+			}
+			if kind == "official41" {
+				exec(migration040)
+				exec(migration041)
 			}
 			if kind == "fork29" {
 				data, err := os.ReadFile("testdata/legacy_ingress029.sql")
@@ -94,8 +107,13 @@ func TestMigrateSupportsOfficialAndForkSchemas(t *testing.T) {
 			if err != nil || traffic != 123 || port != 24001 || version != CurrentSchemaVersion || egress != nil {
 				t.Fatal("upgrade lost rule or usage", err, traffic, port, version)
 			}
-			if (kind == "fork29" || kind == "fork30") && (ingress == nil || *ingress != 1) {
+			if (kind == "fork29" || kind == "fork30" || kind == "fork39") && (ingress == nil || *ingress != 1) {
 				t.Fatal("fork group binding lost")
+			}
+			var groupTLS, mux bool
+			err = pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='rules' AND column_name='tls_inbound_port'), (SELECT mux_config->>'enabled'='false' FROM nodes WHERE id=1)`).Scan(&groupTLS, &mux)
+			if err != nil || !groupTLS || !mux {
+				t.Fatalf("upgrade lost group TLS or mux defaults: groupTLS=%t mux=%t err=%v", groupTLS, mux, err)
 			}
 		})
 	}

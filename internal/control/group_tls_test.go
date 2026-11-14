@@ -104,3 +104,65 @@ func TestGroupTLSFanoutClaimsAndMembership(t *testing.T) {
 		t.Fatal("failed listener edit not rolled back", port, err)
 	}
 }
+
+func TestNodeSaveAllowsGroupTLSButRejectsOutOfRangeOrdinaryRules(t *testing.T) {
+	f, group, nodes := groupRuleFixture(t, 2)
+	ctx := context.Background()
+	for _, node := range nodes {
+		cfg := tlsinbound.DefaultConfig()
+		cfg.Name = "shared SNI"
+		cfg.Port = 24443
+		cfg.AllowedSNI = []string{"example.test"}
+		securityStatus(t, f.request(f.admin, fmt.Sprintf("admin/nodes/%d/tls-inbounds", node), "PUT", map[string]any{"config": cfg}), 200)
+	}
+	shared := groupInput(group)
+	shared.TLSInboundPort = 24443
+	shared.SNINames = []string{"app.example.test"}
+	ruleResultID(t, f, shared)
+
+	node, _, err := loadNodeInput(ctx, f.p, nodes[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := fmt.Sprintf("admin/nodes/%d", nodes[0])
+	node.Notes = "group TLS save"
+	securityStatus(t, f.request(f.admin, path, "PUT", node), 200)
+	var notes string
+	if err = f.p.QueryRow(ctx, "SELECT notes FROM nodes WHERE id=$1", nodes[0]).Scan(&notes); err != nil || notes != node.Notes {
+		t.Fatalf("node edit not saved: %q, %v", notes, err)
+	}
+
+	// Partial basic and protocol edits must use the same rule-aware check.
+	loaded, _, err := loadNodeInput(ctx, f.p, nodes[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(loaded)
+	var basic NodeBasicInput
+	var protocols NodeProtocolsInput
+	if err = json.Unmarshal(body, &basic); err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(body, &protocols); err != nil {
+		t.Fatal(err)
+	}
+	securityStatus(t, f.request(f.admin, path+"/basic", "PUT", basic), 200)
+	securityStatus(t, f.request(f.admin, path+"/protocols", "PUT", protocols), 200)
+
+	ordinary := groupInput(group)
+	ordinary.ListenPort = 24005
+	ordinaryID := ruleResultID(t, f, ordinary)
+	// Disabled rules retain their port reservations and must also block narrowing.
+	securityStatus(t, f.request(f.user, "rules/batch", "POST", BatchInput{IDs: []int64{ordinaryID}, Action: "disable"}), 200)
+	loaded, _, err = loadNodeInput(ctx, f.p, nodes[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded.PortMin = 24006
+	loaded.Notes = "must not save"
+	securityStatus(t, f.request(f.admin, path, "PUT", loaded), 409)
+	var portMin int
+	if err = f.p.QueryRow(ctx, "SELECT port_min,notes FROM nodes WHERE id=$1", nodes[0]).Scan(&portMin, &notes); err != nil || portMin != 24000 || notes != node.Notes {
+		t.Fatalf("rejected edit changed node: portMin=%d notes=%q err=%v", portMin, notes, err)
+	}
+}

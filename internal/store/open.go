@@ -128,7 +128,16 @@ var migration038 string
 //go:embed migration039.sql
 var migration039 string
 
-const CurrentSchemaVersion = 39
+//go:embed migration040.sql
+var migration040 string
+
+//go:embed migration041.sql
+var migration041 string
+
+//go:embed migration042.sql
+var migration042 string
+
+const CurrentSchemaVersion = 42
 
 func CheckSchema(ctx context.Context, p *pgxpool.Pool) error {
 	var version int
@@ -378,8 +387,29 @@ func Migrate(ctx context.Context, p *pgxpool.Pool) error {
 			return err
 		}
 	}
-	if version < 39 {
-		if _, err = tx.Exec(ctx, migration039); err != nil {
+	// Both the fork and upstream used schema version 39 for different features.
+	// Inspect the actual schema so an upstream 39+ database also gains group TLS.
+	var hasGroupTLS bool
+	if err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='rules' AND column_name='tls_inbound_port')").Scan(&hasGroupTLS); err != nil {
+		return err
+	}
+	if !hasGroupTLS {
+		if _, err = tx.Exec(ctx, strings.Replace(migration039, "INSERT INTO schema_version VALUES(39);", "INSERT INTO schema_version VALUES(39) ON CONFLICT DO NOTHING;", 1)); err != nil {
+			return err
+		}
+	}
+	if version < 40 {
+		if _, err = tx.Exec(ctx, migration040); err != nil {
+			return err
+		}
+	}
+	if version < 41 {
+		if _, err = tx.Exec(ctx, migration041); err != nil {
+			return err
+		}
+	}
+	if version < 42 {
+		if _, err = tx.Exec(ctx, migration042); err != nil {
 			return err
 		}
 	}

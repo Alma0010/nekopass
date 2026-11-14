@@ -35,6 +35,10 @@ type listener struct {
 	cancel  context.CancelFunc
 }
 type Engine struct {
+	muxMu       sync.Mutex
+	muxCarriers map[string]int
+	muxTotal    int
+
 	clientTCPBrutal  *clientTCPBrutal
 	brutalBudget     *brutal.Budget
 	mu               sync.Mutex
@@ -69,6 +73,7 @@ type Engine struct {
 	challengeServers map[int32]*http.Server
 	ipRecoveryConfig *pb.IPRecoveryConfig
 	ipRecoveryCancel context.CancelFunc
+	ipRecoveryDone   <-chan struct{}
 	ipRecoveryStatus atomic.Pointer[pb.IPRecoveryStatus]
 	ipRecoveryAPI    func() iprecovery.API
 	ipRecoveryProbe  func(context.Context, string) (bool, error)
@@ -142,6 +147,9 @@ func (e *Engine) Apply(c *pb.ControlMessage) error {
 	defer e.mu.Unlock()
 	if e.closed {
 		return errors.New("engine closed")
+	}
+	if err := validateMuxControl(c); err != nil {
+		return err
 	}
 	if err := validateBrutalControl(c); err != nil {
 		return err

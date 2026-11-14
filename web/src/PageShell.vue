@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onUnmounted, watch } from 'vue'
+import { pendingTicketCount } from './ticket-badge'
 import type { Me } from './api'
-const props = defineProps<{ me: Me | null; loading: boolean; error: string; active: string; admin?: boolean }>()
+const props = defineProps<{ me: Me | null; loading: boolean; error: string; active: string; admin?: boolean; pendingTickets?: number }>()
 const allowed = computed(() => !!props.me && (!props.admin || props.me.is_admin))
+watch(() => props.pendingTickets, value => { if (value !== undefined) pendingTicketCount.value = value }, { immediate: true })
+onUnmounted(() => { if (props.pendingTickets !== undefined) pendingTicketCount.value = 0 })
 </script>
 <template>
  <div class="page-content" tabindex="-1">

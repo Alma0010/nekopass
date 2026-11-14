@@ -6,6 +6,7 @@ import BrandLogo from './BrandLogo.vue'
 import { api, type Me } from './api'
 import { applyTheme } from './theme'
 import {site} from './site'
+import { pendingTicketCount } from './ticket-badge'
 const props = defineProps<{ me: Me | null; loading: boolean; error: string; active: string; admin?: boolean; pending?: boolean }>()
 const menuOpen = ref(false), dark = ref(localStorage.getItem('nekopass-theme-v3') !== 'light')
 const userLinks = [{path:'/',label:'主页',icon:'home',key:'home'},{path:'/profile',label:'个人中心',icon:'user',key:'profile'},{path:'/forward_rules',label:'转发规则',icon:'rules',key:'rules'},{path:'/shop',label:'商城',icon:'shop',key:'shop'},{path:'/orders',label:'我的订单',icon:'orders',key:'orders'},{path:'/tickets',label:'工单',icon:'rules',key:'tickets'},{path:'/referrals',label:'邀请返利',icon:'user',key:'referrals'},{path:'/node_status',label:'节点状态',icon:'node',key:'probe'}]
@@ -29,7 +30,7 @@ function retry() { location.reload() }
    </div>
   </header>
   <button v-if="menuOpen" class="menu-backdrop" aria-label="关闭菜单" @click="menuOpen=false"></button>
-  <aside id="sidebar-navigation" class="sidebar" :class="{open:menuOpen}"><el-skeleton v-if="admin && !allowed" class="sidebar-loading" :rows="5" animated /><nav v-else><a v-for="item in links" :key="item.path" :href="item.path" @click="menuOpen=false" :class="{active:active===item.key}" :aria-current="active===item.key ? 'page' : undefined"><Icon :name="item.icon" />{{ item.label }}</a></nav></aside>
+  <aside id="sidebar-navigation" class="sidebar" :class="{open:menuOpen}"><el-skeleton v-if="admin && !allowed" class="sidebar-loading" :rows="5" animated /><nav v-else><a v-for="item in links" :key="item.path" :href="item.path" @click="menuOpen=false" :class="{active:active===item.key}" :aria-current="active===item.key ? 'page' : undefined"><Icon :name="item.icon" />{{ item.label }}<span v-if="admin && item.key==='tickets' && pendingTicketCount" class="sidebar-pending-count">{{pendingTicketCount>99?'99+':pendingTicketCount}}</span></a></nav></aside>
   <main class="workspace" id="main-content" tabindex="-1"><div v-if="pending" class="navigation-progress" role="status" aria-label="正在切换页面"></div>
    <slot />
   </main>
