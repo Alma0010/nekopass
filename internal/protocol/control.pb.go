@@ -3097,25 +3097,26 @@ func (x *TLSClientConfig) GetQuicPadding() *QUICPaddingConfig {
 }
 
 type TLSServerConfig struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	ServerName          string                 `protobuf:"bytes,1,opt,name=server_name,json=serverName,proto3" json:"server_name,omitempty"`
-	Certificate         string                 `protobuf:"bytes,2,opt,name=certificate,proto3" json:"certificate,omitempty"`
-	PrivateKey          string                 `protobuf:"bytes,3,opt,name=private_key,json=privateKey,proto3" json:"private_key,omitempty"`
-	Path                string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
-	StreamWindowMib     int32                  `protobuf:"varint,5,opt,name=stream_window_mib,json=streamWindowMib,proto3" json:"stream_window_mib,omitempty"`
-	ConnectionWindowMib int32                  `protobuf:"varint,6,opt,name=connection_window_mib,json=connectionWindowMib,proto3" json:"connection_window_mib,omitempty"`
-	MaxStreams          int32                  `protobuf:"varint,7,opt,name=max_streams,json=maxStreams,proto3" json:"max_streams,omitempty"`
-	ChallengePort       int32                  `protobuf:"varint,8,opt,name=challenge_port,json=challengePort,proto3" json:"challenge_port,omitempty"`
-	Challenges          []*ACMEChallenge       `protobuf:"bytes,9,rep,name=challenges,proto3" json:"challenges,omitempty"`
-	SiteTitle           string                 `protobuf:"bytes,10,opt,name=site_title,json=siteTitle,proto3" json:"site_title,omitempty"`
-	Host                string                 `protobuf:"bytes,11,opt,name=host,proto3" json:"host,omitempty"`
-	FallbackUrl         string                 `protobuf:"bytes,12,opt,name=fallback_url,json=fallbackUrl,proto3" json:"fallback_url,omitempty"`
-	PaddingEnabled      bool                   `protobuf:"varint,13,opt,name=padding_enabled,json=paddingEnabled,proto3" json:"padding_enabled,omitempty"`
-	PaddingScheme       []string               `protobuf:"bytes,14,rep,name=padding_scheme,json=paddingScheme,proto3" json:"padding_scheme,omitempty"`
-	PublicPort          int32                  `protobuf:"varint,15,opt,name=public_port,json=publicPort,proto3" json:"public_port,omitempty"`
-	QuicPadding         *QUICPaddingConfig     `protobuf:"bytes,16,opt,name=quic_padding,json=quicPadding,proto3" json:"quic_padding,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	state                  protoimpl.MessageState `protogen:"open.v1"`
+	ServerName             string                 `protobuf:"bytes,1,opt,name=server_name,json=serverName,proto3" json:"server_name,omitempty"`
+	Certificate            string                 `protobuf:"bytes,2,opt,name=certificate,proto3" json:"certificate,omitempty"`
+	PrivateKey             string                 `protobuf:"bytes,3,opt,name=private_key,json=privateKey,proto3" json:"private_key,omitempty"`
+	Path                   string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
+	StreamWindowMib        int32                  `protobuf:"varint,5,opt,name=stream_window_mib,json=streamWindowMib,proto3" json:"stream_window_mib,omitempty"`
+	ConnectionWindowMib    int32                  `protobuf:"varint,6,opt,name=connection_window_mib,json=connectionWindowMib,proto3" json:"connection_window_mib,omitempty"`
+	MaxStreams             int32                  `protobuf:"varint,7,opt,name=max_streams,json=maxStreams,proto3" json:"max_streams,omitempty"`
+	ChallengePort          int32                  `protobuf:"varint,8,opt,name=challenge_port,json=challengePort,proto3" json:"challenge_port,omitempty"`
+	Challenges             []*ACMEChallenge       `protobuf:"bytes,9,rep,name=challenges,proto3" json:"challenges,omitempty"`
+	SiteTitle              string                 `protobuf:"bytes,10,opt,name=site_title,json=siteTitle,proto3" json:"site_title,omitempty"`
+	Host                   string                 `protobuf:"bytes,11,opt,name=host,proto3" json:"host,omitempty"`
+	FallbackUrl            string                 `protobuf:"bytes,12,opt,name=fallback_url,json=fallbackUrl,proto3" json:"fallback_url,omitempty"`
+	PaddingEnabled         bool                   `protobuf:"varint,13,opt,name=padding_enabled,json=paddingEnabled,proto3" json:"padding_enabled,omitempty"`
+	PaddingScheme          []string               `protobuf:"bytes,14,rep,name=padding_scheme,json=paddingScheme,proto3" json:"padding_scheme,omitempty"`
+	PublicPort             int32                  `protobuf:"varint,15,opt,name=public_port,json=publicPort,proto3" json:"public_port,omitempty"`
+	QuicPadding            *QUICPaddingConfig     `protobuf:"bytes,16,opt,name=quic_padding,json=quicPadding,proto3" json:"quic_padding,omitempty"`
+	FallbackForwardCookies bool                   `protobuf:"varint,17,opt,name=fallback_forward_cookies,json=fallbackForwardCookies,proto3" json:"fallback_forward_cookies,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *TLSServerConfig) Reset() {
@@ -3258,6 +3259,13 @@ func (x *TLSServerConfig) GetQuicPadding() *QUICPaddingConfig {
 		return x.QuicPadding
 	}
 	return nil
+}
+
+func (x *TLSServerConfig) GetFallbackForwardCookies() bool {
+	if x != nil {
+		return x.FallbackForwardCookies
+	}
+	return false
 }
 
 type ACMEChallenge struct {
@@ -4024,7 +4032,7 @@ const file_api_control_proto_rawDesc = "" +
 	"\x0epadding_scheme\x18\f \x03(\tR\rpaddingScheme\x12\x1f\n" +
 	"\vmax_streams\x18\r \x01(\x05R\n" +
 	"maxStreams\x12A\n" +
-	"\fquic_padding\x18\x0e \x01(\v2\x1e.nekopass.v1.QUICPaddingConfigR\vquicPadding\"\xf7\x04\n" +
+	"\fquic_padding\x18\x0e \x01(\v2\x1e.nekopass.v1.QUICPaddingConfigR\vquicPadding\"\xb1\x05\n" +
 	"\x0fTLSServerConfig\x12\x1f\n" +
 	"\vserver_name\x18\x01 \x01(\tR\n" +
 	"serverName\x12 \n" +
@@ -4049,7 +4057,8 @@ const file_api_control_proto_rawDesc = "" +
 	"\x0epadding_scheme\x18\x0e \x03(\tR\rpaddingScheme\x12\x1f\n" +
 	"\vpublic_port\x18\x0f \x01(\x05R\n" +
 	"publicPort\x12A\n" +
-	"\fquic_padding\x18\x10 \x01(\v2\x1e.nekopass.v1.QUICPaddingConfigR\vquicPadding\"\xa9\x01\n" +
+	"\fquic_padding\x18\x10 \x01(\v2\x1e.nekopass.v1.QUICPaddingConfigR\vquicPadding\x128\n" +
+	"\x18fallback_forward_cookies\x18\x11 \x01(\bR\x16fallbackForwardCookies\"\xa9\x01\n" +
 	"\rACMEChallenge\x12\x16\n" +
 	"\x06domain\x18\x01 \x01(\tR\x06domain\x12\x14\n" +
 	"\x05token\x18\x02 \x01(\tR\x05token\x12+\n" +

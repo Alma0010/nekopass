@@ -115,7 +115,7 @@ func appendTLSControl(ctx context.Context, tx pgx.Tx, nodeID int64, out *pb.Cont
 		return err
 	}
 	out.Node.Tls = &pb.TLSServerConfig{QuicPadding: client.QUICPadding.Proto(tunnel.H3(out.Node.TunnelProtocol)), PaddingEnabled: out.Node.TunnelProtocol == "tls_tcp" && client.PaddingEnabled, PaddingScheme: client.PaddingScheme, ServerName: client.ServerName, Certificate: cert, PrivateKey: key, Path: client.Path,
-		StreamWindowMib: int32(client.StreamWindowMiB), ConnectionWindowMib: int32(client.ConnectionWindowMiB), MaxStreams: int32(client.MaxStreams), ChallengePort: int32(client.HTTPChallengePort), SiteTitle: client.SiteTitle, Host: client.Host, FallbackUrl: client.FallbackURL, PublicPort: int32(client.PublicPort)}
+		StreamWindowMib: int32(client.StreamWindowMiB), ConnectionWindowMib: int32(client.ConnectionWindowMiB), MaxStreams: int32(client.MaxStreams), ChallengePort: int32(client.HTTPChallengePort), SiteTitle: client.SiteTitle, Host: client.Host, FallbackUrl: client.FallbackURL, FallbackForwardCookies: client.FallbackForwardCookies, PublicPort: int32(client.PublicPort)}
 	if !tunnel.TLS(out.Node.TunnelProtocol) {
 		out.Node.Tls.Certificate = ""
 		out.Node.Tls.PrivateKey = ""

@@ -21,31 +21,32 @@ import (
 )
 
 type TunnelTLSConfig struct {
-	QUICPadding         quicpadding.Config `json:"quic_padding"`
-	PaddingEnabled      bool               `json:"padding_enabled"`
-	PaddingScheme       []string           `json:"padding_scheme"`
-	ServerName          string             `json:"server_name"`
-	ClientSNI           string             `json:"client_sni"`
-	Fingerprint         string             `json:"fingerprint"`
-	CertificateMode     string             `json:"certificate_mode"`
-	Certificate         string             `json:"certificate"`
-	PrivateKey          string             `json:"private_key"`
-	RootCA              string             `json:"root_ca"`
-	Path                string             `json:"path"`
-	Host                string             `json:"host"`
-	FallbackURL         string             `json:"fallback_url"`
-	PublicPort          int                `json:"public_port"`
-	PoolSize            int                `json:"pool_size"`
-	StreamWindowMiB     int                `json:"stream_window_mib"`
-	ConnectionWindowMiB int                `json:"connection_window_mib"`
-	MaxStreams          int                `json:"max_streams"`
-	SiteTitle           string             `json:"site_title"`
-	ACMEEmail           string             `json:"acme_email"`
-	ACMEDirectory       string             `json:"acme_directory"`
-	ACMERootCA          string             `json:"acme_root_ca"`
-	HTTPChallengePort   int                `json:"http_challenge_port"`
-	DNSProvider         string             `json:"dns_provider"`
-	DNSCredentials      map[string]string  `json:"dns_credentials"`
+	QUICPadding            quicpadding.Config `json:"quic_padding"`
+	PaddingEnabled         bool               `json:"padding_enabled"`
+	PaddingScheme          []string           `json:"padding_scheme"`
+	ServerName             string             `json:"server_name"`
+	ClientSNI              string             `json:"client_sni"`
+	Fingerprint            string             `json:"fingerprint"`
+	CertificateMode        string             `json:"certificate_mode"`
+	Certificate            string             `json:"certificate"`
+	PrivateKey             string             `json:"private_key"`
+	RootCA                 string             `json:"root_ca"`
+	Path                   string             `json:"path"`
+	Host                   string             `json:"host"`
+	FallbackURL            string             `json:"fallback_url"`
+	FallbackForwardCookies bool               `json:"fallback_forward_cookies"`
+	PublicPort             int                `json:"public_port"`
+	PoolSize               int                `json:"pool_size"`
+	StreamWindowMiB        int                `json:"stream_window_mib"`
+	ConnectionWindowMiB    int                `json:"connection_window_mib"`
+	MaxStreams             int                `json:"max_streams"`
+	SiteTitle              string             `json:"site_title"`
+	ACMEEmail              string             `json:"acme_email"`
+	ACMEDirectory          string             `json:"acme_directory"`
+	ACMERootCA             string             `json:"acme_root_ca"`
+	HTTPChallengePort      int                `json:"http_challenge_port"`
+	DNSProvider            string             `json:"dns_provider"`
+	DNSCredentials         map[string]string  `json:"dns_credentials"`
 }
 
 // Certificate jobs use this identity to reject stale issuance results. Transport

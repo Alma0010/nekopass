@@ -1727,6 +1727,7 @@ components:
         client_sni: {type: string, description: Optional SNI used by all ingress connections to this exit; certificate names remain verified}
         fingerprint: {type: string, enum: ['off', chrome, firefox], default: 'off', description: 'off uses standard verified TLS; browser profiles use uTLS for TCP transports only; ignored for HTTP/3'}
         host: {type: string, description: 'HTTP authority, optional port; default uses the certificate hostname'}
+        fallback_forward_cookies: {type: boolean, default: false, description: 'Forward cookies in both directions for a trusted HTTP fallback website'}
         fallback_url: {type: string, description: 'HTTP/HTTPS fallback reverse-proxy URL; empty returns ordinary 404; HTTPS also handles pre-flight TLS rejection'}
         certificate_mode: {type: string, enum: [self_signed, import, acme_dns, acme_http], default: self_signed}
         certificate: {type: string, description: Public PEM chain for import}

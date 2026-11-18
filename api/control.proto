@@ -300,6 +300,7 @@ message TLSServerConfig {
  repeated string padding_scheme = 14;
  int32 public_port = 15;
  QUICPaddingConfig quic_padding = 16;
+ bool fallback_forward_cookies = 17;
 }
 message ACMEChallenge {
  string domain = 1;

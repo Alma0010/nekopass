@@ -114,6 +114,10 @@ const paddingPlaceholder='stop=8\n0=30-30\n1=100-400\n2=400-500,c,500-1000,c,500
    <el-input v-model="nodeForm.tls.fallback_url" placeholder="https://www.example.com（留空返回普通 404）"/>
    <span class="field-tip">用于普通 HTTP 访问及未通过认证的 HTTP 请求；留空或网站不可用时返回普通 404。</span>
   </el-form-item>
+  <el-form-item v-if="nodeForm.tls.fallback_url" label="转发网站 Cookie">
+   <el-switch v-model="nodeForm.tls.fallback_forward_cookies"/>
+   <span class="field-tip">仅在信任回退网站且网站需要登录时开启。默认隔离 HTTP 反向代理的 Cookie 和 Set-Cookie。加密直通的流量由目标网站处理。</span>
+  </el-form-item>
  </template>
 </div>
 </template>

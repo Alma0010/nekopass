@@ -283,7 +283,7 @@ func (e *Engine) configureTunnel(c *pb.ControlMessage) error {
 		settings := &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, NextProtos: []string{"http/1.1"}, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return e.h2Certificate.Load(), nil }}
 		pair, _ := tls.X509KeyPair([]byte(c.Node.Tls.Certificate), []byte(c.Node.Tls.PrivateKey))
 		e.h2Certificate.Store(&pair)
-		ln = newCamouflageTLSListener(ctx, ln, settings, e)
+		ln = newCamouflageTLSListener(ctx, ln, settings, e, true)
 	}
 	e.wg.Add(1)
 	go e.acceptTunnel(ctx, ln)

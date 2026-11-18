@@ -15,6 +15,20 @@ import (
 
 var camouflageTransport = &http.Transport{DialContext: (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, ForceAttemptHTTP2: true, TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 5 * time.Second, IdleConnTimeout: 30 * time.Second, MaxIdleConns: 64, MaxIdleConnsPerHost: 4, MaxConnsPerHost: 64, MaxResponseHeaderBytes: 64 << 10}
 
+// ReverseProxy can write informational responses before ModifyResponse and
+// can populate trailers after the body is read.
+type fallbackCookieWriter struct{ http.ResponseWriter }
+
+func (w fallbackCookieWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+func (w fallbackCookieWriter) stripCookies() {
+	w.Header().Del("Set-Cookie")
+	w.Header().Del(http.TrailerPrefix + "Set-Cookie")
+}
+func (w fallbackCookieWriter) WriteHeader(status int) {
+	w.stripCookies()
+	w.ResponseWriter.WriteHeader(status)
+}
+
 func ordinary404(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
@@ -51,6 +65,11 @@ func (e *Engine) camouflageWithAltSvc(w http.ResponseWriter, r *http.Request, al
 		ordinary404(w, r)
 		return
 	}
+	if !node.Tls.FallbackForwardCookies {
+		filter := fallbackCookieWriter{w}
+		defer filter.stripCookies()
+		w = filter
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	r = r.Clone(ctx)
@@ -59,6 +78,10 @@ func (e *Engine) camouflageWithAltSvc(w http.ResponseWriter, r *http.Request, al
 		p.SetURL(target)
 		p.Out.Host = target.Host
 		// Tunnel metadata and exporter-bound proofs must never reach the decoy.
+		if !node.Tls.FallbackForwardCookies {
+			p.Out.Header.Del("Cookie")
+			p.Out.Trailer.Del("Cookie")
+		}
 		p.Out.Header.Del("Authorization")
 		p.Out.Header.Del("Proxy-Authorization")
 		p.Out.Header.Del("X-Stream")
@@ -66,6 +89,10 @@ func (e *Engine) camouflageWithAltSvc(w http.ResponseWriter, r *http.Request, al
 		p.Out.Header.Del("X-Stream-Nonce")
 		p.Out.Header.Del("X-Stream-Binding")
 	}, ModifyResponse: func(response *http.Response) error {
+		if !node.Tls.FallbackForwardCookies {
+			response.Header.Del("Set-Cookie")
+			response.Trailer.Del("Set-Cookie")
+		}
 		if altSvc != "" {
 			response.Header.Set("Alt-Svc", altSvc)
 		}

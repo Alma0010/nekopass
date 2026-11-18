@@ -23,6 +23,8 @@ raw(tcp)、h2 和 raw(udp) 均可选择 TLS；[HTTP/3](../protocols/h3.md) 固�
 | ACME 私有根 CA | 私有 ACME 服务的公开根证书；公共 CA 留空。 |
 | 签发根 CA | 私有签发 CA 的公开根证书，供入口验证；公共 CA 留空。 |
 
+HTTP 回退默认隔离浏览器的 `Cookie` 和网站返回的 `Set-Cookie`。可信回退网站需要登录时，可开启「转发网站 Cookie」。此设置作用于节点终止 TLS 后的 HTTP 反向代理；原样转接的 TLS 连接由目标网站管理 Cookie。更新出口节点后生效。
+
 ## DNS 自动申请
 
 DNS 凭据填写 JSON，键名如下：

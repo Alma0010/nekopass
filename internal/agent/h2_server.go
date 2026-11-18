@@ -106,7 +106,7 @@ func (e *Engine) startH2Server(ctx context.Context, ln net.Listener, cfg *pb.TLS
 	physical = max(16, min(physical, 512))
 	ln = &limitedTLSListener{Listener: ln, slots: make(chan struct{}, physical)}
 	e.wg.Add(1)
-	go func() { defer e.wg.Done(); server.Serve(newCamouflageTLSListener(ctx, ln, settings, e)) }()
+	go func() { defer e.wg.Done(); server.Serve(newCamouflageTLSListener(ctx, ln, settings, e, false)) }()
 	e.wg.Add(1)
 	go func() { defer e.wg.Done(); <-ctx.Done(); server.Close() }()
 	return nil

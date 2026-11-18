@@ -65,20 +65,22 @@ func (c *probeCaptureConn) stopCapture() []byte {
 
 type camouflageTLSListener struct {
 	net.Listener
-	ctx         context.Context
-	cancel      context.CancelFunc
-	settings    *tls.Config
-	engine      *Engine
-	ready       chan net.Conn
-	mu          sync.Mutex
-	closed      bool
-	connections map[*probeCaptureConn]bool
-	wg          sync.WaitGroup
+	ctx          context.Context
+	cancel       context.CancelFunc
+	settings     *tls.Config
+	engine       *Engine
+	ready        chan net.Conn
+	mu           sync.Mutex
+	closed       bool
+	connections  map[*probeCaptureConn]bool
+	limitPending bool
+	pending      int
+	wg           sync.WaitGroup
 }
 
-func newCamouflageTLSListener(parent context.Context, ln net.Listener, settings *tls.Config, e *Engine) *camouflageTLSListener {
+func newCamouflageTLSListener(parent context.Context, ln net.Listener, settings *tls.Config, e *Engine, limitPending bool) *camouflageTLSListener {
 	ctx, cancel := context.WithCancel(parent)
-	l := &camouflageTLSListener{Listener: ln, ctx: ctx, cancel: cancel, settings: settings, engine: e, ready: make(chan net.Conn), connections: map[*probeCaptureConn]bool{}}
+	l := &camouflageTLSListener{Listener: ln, ctx: ctx, cancel: cancel, settings: settings, engine: e, limitPending: limitPending, ready: make(chan net.Conn), connections: map[*probeCaptureConn]bool{}}
 	l.wg.Add(1)
 	go l.acceptLoop()
 	return l
@@ -107,6 +109,24 @@ func (l *camouflageTLSListener) Close() error {
 	l.wg.Wait()
 	return err
 }
+
+// Called under mu. On raw TLS only pending handshakes and fallback occupy a
+// slot; established tunnels use the engine's separate live connection limit.
+func (l *camouflageTLSListener) reservePending() bool {
+	if !l.limitPending {
+		return true
+	}
+	limit := l.engine.maxConnections.Load()
+	if limit <= 0 || limit > 512 {
+		limit = 512
+	}
+	if int64(l.pending) >= limit {
+		return false
+	}
+	l.pending++
+	return true
+}
+
 func (l *camouflageTLSListener) acceptLoop() {
 	defer l.wg.Done()
 	for {
@@ -124,10 +144,25 @@ func (l *camouflageTLSListener) acceptLoop() {
 			raw.Close()
 			return
 		}
+		if !l.reservePending() {
+			l.mu.Unlock()
+			raw.Close()
+			continue
+		}
 		l.connections[c] = true
 		l.wg.Add(1)
 		l.mu.Unlock()
-		go func() { defer l.wg.Done(); l.route(c) }()
+		go func() {
+			defer l.wg.Done()
+			defer func() {
+				if l.limitPending {
+					l.mu.Lock()
+					l.pending--
+					l.mu.Unlock()
+				}
+			}()
+			l.route(c)
+		}()
 	}
 }
 func (l *camouflageTLSListener) route(c *probeCaptureConn) {

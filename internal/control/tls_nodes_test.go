@@ -73,6 +73,7 @@ func TestTLSNodeConfigurationScopeAndProtocolGate(t *testing.T) {
 	settings.Host = "cdn.example.test"
 	settings.Path = "/images/upload"
 	settings.FallbackURL = "https://www.example.test"
+	settings.FallbackForwardCookies = true
 	settings.DNSCredentials = map[string]string{"api_token": "fixture-dns-credential-not-forwarded"}
 	exitInput := node("tls_h2")
 	exitInput.TLS = &settings
@@ -125,7 +126,7 @@ func TestTLSNodeConfigurationScopeAndProtocolGate(t *testing.T) {
 	if out.Node.Tls.PrivateKey != private || len(out.EgressRules) != 1 || out.EgressRules[0].UserId != uid {
 		t.Fatal("exit certificate or rule scope missing")
 	}
-	if out.Node.Tls.Host != settings.Host || out.Node.Tls.FallbackUrl != settings.FallbackURL {
+	if out.Node.Tls.Host != settings.Host || out.Node.Tls.FallbackUrl != settings.FallbackURL || !out.Node.Tls.FallbackForwardCookies {
 		t.Fatal("exit camouflage settings not delivered")
 	}
 	entryReport.ProtocolVersion = 11
