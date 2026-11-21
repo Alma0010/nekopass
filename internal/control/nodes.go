@@ -59,7 +59,7 @@ func (s *Server) nodes(w http.ResponseWriter, r *http.Request) {
 	if !admin(w, r) {
 		return
 	}
-	rows, e := s.Pool.Query(r.Context(), `SELECT to_char(n.ingress_rate::numeric/10000,'FM9990.0000') AS ingress_multiplier,to_char(n.egress_rate::numeric/10000,'FM9990.0000') AS egress_multiplier,n.bandwidth_up_mbps,n.bandwidth_down_mbps,n.brutal_enabled,n.client_tcp_brutal_enabled,n.id,n.name,n.agent_version,n.update_supported,(SELECT jsonb_build_object('generation',u.generation,'version',u.version,'state',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN 'unconfirmed' ELSE u.state END,'error',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN '超过 15 分钟未收到更新结果，请检查节点连接及更新日志' ELSE u.error END,'requested_at',u.requested_at,'updated_at',u.updated_at) FROM node_updates u WHERE u.node_id=n.id) AS update_status,n.token,(n.instance_id<>'') AS bound,n.public_address,n.notes,n.enabled,n.listen_host,n.port_min,n.port_max,n.max_connections,n.dial_timeout_seconds,n.idle_timeout_seconds,n.udp_idle_timeout_seconds,n.probe_interval_seconds,n.disk_path,n.network_interfaces,n.ingress_enabled,n.deny_udp_ingress_creation,n.allow_direct,n.tunnel_exit_enabled,n.tunnel_protocol,CASE WHEN n.tunnel_protocol IN ('plain_h2','tls_h2','random_h2') THEN 'h2' WHEN n.tunnel_protocol='tls_h3' THEN 'h3' WHEN n.tunnel_protocol IN ('plain_udp','dtls_udp','random_udp') THEN 'raw_udp' ELSE 'raw_tcp' END AS tunnel_transport,CASE WHEN n.tunnel_protocol IN ('tls_tcp','tls_h2','dtls_udp','tls_h3') THEN 'tls' WHEN n.tunnel_protocol IN ('random_tcp','random_h2','random_udp') THEN 'random' ELSE 'none' END AS tunnel_security,n.mux_config AS mux,n.random_config AS random,n.tls_config AS tls,n.tls_status,n.tls_error,n.tls_not_after,n.protocol_version,n.tunnel_listen_host,n.tunnel_listen_port,n.tunnel_public_host,n.last_seen,n.applied_revision,n.config_revision,n.sync_error,n.active_connections,n.probe,n.probe_received_at,COALESCE(n.last_seen>now()-interval '12 seconds',false) AS online,COALESCE((SELECT array_agg(group_id ORDER BY group_id) FROM node_group_members WHERE node_id=n.id),'{}') AS group_ids,COALESCE((SELECT array_agg(ingress_node_id ORDER BY ingress_node_id) FROM node_tunnel_links WHERE egress_node_id=n.id),'{}') AS allowed_ingress_ids,(SELECT count(*) FROM rule_ingress_nodes WHERE node_id=n.id) AS rule_count FROM nodes n ORDER BY n.id`)
+	rows, e := s.Pool.Query(r.Context(), `SELECT to_char(n.ingress_rate::numeric/10000,'FM9990.0000') AS ingress_multiplier,to_char(n.egress_rate::numeric/10000,'FM9990.0000') AS egress_multiplier,n.bandwidth_up_mbps,n.bandwidth_down_mbps,n.brutal_enabled,n.client_tcp_brutal_enabled,n.id,n.name,n.agent_version,n.update_supported,(SELECT jsonb_build_object('generation',u.generation,'version',u.version,'state',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN 'unconfirmed' ELSE u.state END,'error',CASE WHEN u.state IN ('queued','running') AND u.requested_at<now()-interval '15 minutes' THEN '超过 15 分钟未收到更新结果，请检查节点连接及更新日志' ELSE u.error END,'requested_at',u.requested_at,'updated_at',u.updated_at) FROM node_updates u WHERE u.node_id=n.id) AS update_status,n.uninstall_supported,(SELECT jsonb_build_object('state',u.state,'error',u.error,'requested_at',u.requested_at) FROM node_uninstalls u WHERE u.node_id=n.id) AS uninstall_status,n.token,(n.instance_id<>'') AS bound,n.public_address,n.notes,n.enabled,n.listen_host,n.port_min,n.port_max,n.max_connections,n.dial_timeout_seconds,n.idle_timeout_seconds,n.udp_idle_timeout_seconds,n.probe_interval_seconds,n.disk_path,n.network_interfaces,n.ingress_enabled,n.deny_udp_ingress_creation,n.allow_direct,n.tunnel_exit_enabled,n.tunnel_protocol,CASE WHEN n.tunnel_protocol IN ('plain_h2','tls_h2','random_h2') THEN 'h2' WHEN n.tunnel_protocol='tls_h3' THEN 'h3' WHEN n.tunnel_protocol IN ('plain_udp','dtls_udp','random_udp') THEN 'raw_udp' ELSE 'raw_tcp' END AS tunnel_transport,CASE WHEN n.tunnel_protocol IN ('tls_tcp','tls_h2','dtls_udp','tls_h3') THEN 'tls' WHEN n.tunnel_protocol IN ('random_tcp','random_h2','random_udp') THEN 'random' ELSE 'none' END AS tunnel_security,n.mux_config AS mux,n.random_config AS random,n.tls_config AS tls,n.tls_status,n.tls_error,n.tls_not_after,n.protocol_version,n.tunnel_listen_host,n.tunnel_listen_port,n.tunnel_public_host,n.last_seen,n.applied_revision,n.config_revision,n.sync_error,n.active_connections,n.probe,n.probe_received_at,COALESCE(n.last_seen>now()-interval '12 seconds',false) AS online,COALESCE((SELECT array_agg(group_id ORDER BY group_id) FROM node_group_members WHERE node_id=n.id),'{}') AS group_ids,COALESCE((SELECT array_agg(ingress_node_id ORDER BY ingress_node_id) FROM node_tunnel_links WHERE egress_node_id=n.id),'{}') AS allowed_ingress_ids,(SELECT count(*) FROM rule_ingress_nodes WHERE node_id=n.id) AS rule_count FROM nodes n ORDER BY n.id`)
 	s.sendRows(w, rows, e)
 }
 func (s *Server) saveNode(w http.ResponseWriter, r *http.Request) { s.saveNodePart(w, r, "full") }
@@ -96,6 +96,17 @@ func (s *Server) saveNodePart(w http.ResponseWriter, r *http.Request, part strin
 	id, validID := resourceID(w, r)
 	if !validID {
 		return
+	}
+	if id != 0 {
+		var uninstalling bool
+		if e = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM node_uninstalls WHERE node_id=$1)", id).Scan(&uninstalling); e != nil {
+			s.dbError(w, e)
+			return
+		}
+		if uninstalling {
+			fail(w, 409, "节点已有卸载任务，暂时无法编辑")
+			return
+		}
 	}
 	var retainedHash string
 	if partial != nil {
@@ -401,6 +412,12 @@ func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	force := forceValue == "true"
+	recordOnlyValue := r.URL.Query().Get("record_only")
+	if recordOnlyValue != "" && recordOnlyValue != "true" && recordOnlyValue != "false" {
+		fail(w, 400, "record_only 参数须为 true 或 false")
+		return
+	}
+	recordOnly := recordOnlyValue == "true"
 	ctx := r.Context()
 	tx, e := s.ruleTx(ctx)
 	if e != nil {
@@ -412,11 +429,12 @@ func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {
 		s.dbError(w, e)
 		return
 	}
-	var enabled, online, synchronized, hasRules, hasLedger bool
+	var enabled, online, synchronized, supported, hasLedger bool
+	var instance string
 	e = tx.QueryRow(ctx, `SELECT enabled,COALESCE(last_seen>now()-interval '12 seconds',false),applied_revision>=config_revision,
- EXISTS(SELECT 1 FROM rules WHERE node_id=$1 OR egress_node_id=$1),
+ uninstall_supported,instance_id,
  EXISTS(SELECT 1 FROM grants WHERE node_id=$1) OR EXISTS(SELECT 1 FROM rule_usage WHERE node_id=$1)
- FROM nodes WHERE id=$1 FOR UPDATE`, id).Scan(&enabled, &online, &synchronized, &hasRules, &hasLedger)
+ FROM nodes WHERE id=$1 FOR UPDATE`, id).Scan(&enabled, &online, &synchronized, &supported, &instance, &hasLedger)
 	if errors.Is(e, pgx.ErrNoRows) {
 		fail(w, 404, "节点不存在")
 		return
@@ -427,6 +445,11 @@ func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {
 	}
 	if enabled {
 		fail(w, 409, "请先停用节点，再执行删除")
+		return
+	}
+	hasRules, e := nodeHasRuleReferences(ctx, tx, id)
+	if e != nil {
+		s.dbError(w, e)
 		return
 	}
 	if hasRules {
@@ -441,24 +464,39 @@ func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 409, map[string]any{"error": "此节点有历史用量或额度授权，请二次确认强制删除；已用流量和未归还额度会保留", "code": "node_delete_confirmation_required"})
 		return
 	}
-	if hasLedger {
-		if e = archiveNodeAccounting(ctx, tx, id, current(r).ID); e != nil {
+	if !recordOnly && instance != "" {
+		if !supported {
+			writeJSON(w, 409, map[string]string{
+				"error": "此节点尚未安装自动卸载组件。请重新运行新版安装脚本，或手动卸载后仅删除面板记录。",
+				"code":  "node_uninstall_manual_required",
+			})
+			return
+		}
+		e = queueNodeUninstall(ctx, tx, id, current(r).ID, instance)
+		if errors.Is(e, errNodeUpdateInProgress) {
+			fail(w, 409, e.Error())
+			return
+		}
+		if e != nil {
 			s.dbError(w, e)
 			return
 		}
-	}
-	if _, e = tx.Exec(ctx, "DELETE FROM nodes WHERE id=$1", id); e != nil {
-		s.dbError(w, e)
+		if e = tx.Commit(ctx); e != nil {
+			s.dbError(w, e)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]string{"uninstall_state": "queued"})
 		return
 	}
-	if e = finishRules(ctx, tx); e != nil {
-		fail(w, 400, publicOperationError(e))
+	actor := current(r).ID
+	if e = completeNodeUninstall(ctx, tx, id, &actor, hasLedger); e != nil {
+		s.dbError(w, e)
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
-func archiveNodeAccounting(ctx context.Context, tx pgx.Tx, node, actor int64) error {
+func archiveNodeAccounting(ctx context.Context, tx pgx.Tx, node int64, actor *int64) error {
 	// The node row lock serializes this snapshot with the last Agent report.
 	// Keep issued/released/spent/traffic unchanged: deleting a host must not
 	// make existing usage or unreturned quota grants available to spend again.

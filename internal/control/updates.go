@@ -93,6 +93,15 @@ func (s *Server) updateNode(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, "节点已经是该版本或更新版本")
 		return
 	}
+	var uninstalling bool
+	if err = tx.QueryRow(r.Context(), "SELECT EXISTS(SELECT 1 FROM node_uninstalls WHERE node_id=$1)", id).Scan(&uninstalling); err != nil {
+		s.dbError(w, err)
+		return
+	}
+	if uninstalling {
+		fail(w, 409, "节点已有卸载任务，暂时无法更新")
+		return
+	}
 	var generation int64
 	err = tx.QueryRow(r.Context(), `INSERT INTO node_updates(node_id,version) VALUES($1,$2) ON CONFLICT(node_id) DO UPDATE SET generation=node_updates.generation+1,version=$2,state='queued',error='',requested_at=now(),updated_at=now() WHERE node_updates.state NOT IN ('queued','running') OR node_updates.requested_at<now()-interval '15 minutes' RETURNING generation`, id, in.Version).Scan(&generation)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -113,7 +122,7 @@ func updateControl(ctx context.Context, tx pgx.Tx, node int64, report *pb.AgentM
 	if len(report.AgentVersion) > 64 || (report.AgentVersion != "" && report.AgentVersion != "dev" && !release.ValidVersion(report.AgentVersion)) {
 		return errors.New("invalid Agent version")
 	}
-	if _, err := tx.Exec(ctx, "UPDATE nodes SET agent_version=$2,update_supported=$3 WHERE id=$1", node, report.AgentVersion, report.ProtocolVersion >= 9 && report.UpdateSupported); err != nil {
+	if _, err := tx.Exec(ctx, "UPDATE nodes SET agent_version=$2,update_supported=$3,uninstall_supported=$4 WHERE id=$1", node, report.AgentVersion, report.ProtocolVersion >= 9 && report.UpdateSupported, report.UninstallSupported); err != nil {
 		return err
 	}
 	if r := report.UpdateStatus; r != nil {

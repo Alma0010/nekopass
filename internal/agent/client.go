@@ -89,6 +89,9 @@ func runSession(parent context.Context, e *Engine, client pb.ControlClient, toke
 		if err = e.Apply(config); err != nil {
 			return err
 		}
+		if err = e.stageUninstall(config.UninstallTicket); err != nil {
+			return err
+		}
 		if config.ControlEndpoint != "" && config.ControlEndpoint != server {
 			if _, _, err := controlEndpoint(config.ControlEndpoint); err != nil {
 				return err

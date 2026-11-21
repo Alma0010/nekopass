@@ -281,6 +281,9 @@ func finishRules(ctx context.Context, tx pgx.Tx) error {
 	if err := validateGroupRuleTopology(ctx, tx); err != nil {
 		return err
 	}
+	if err := validateUninstallRuleReferences(ctx, tx); err != nil {
+		return err
+	}
 	if e := store.New(tx).BumpRevision(ctx); e != nil {
 		return e
 	}

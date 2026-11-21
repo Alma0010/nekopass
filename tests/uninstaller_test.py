@@ -1,7 +1,9 @@
 """Run the real uninstaller against a temporary filesystem and mocked systemd/accounts."""
 import contextlib
 import io
+import os
 import pathlib
+import stat
 import subprocess
 import sys
 import tempfile
@@ -57,7 +59,8 @@ class UninstallerTests(unittest.TestCase):
                 output = 'loaded' if matching else 'not-found'
             elif matching:
                 base = '/opt/nekopass' if matching == 'nekopass-agent' else '/opt/' + matching
-                output = 'path=' + base + '/bin/' + ('nekopass-agent' if unit == matching + '.service' else 'nekopass-update') + ' ; argv[]=fixture'
+                binaries = {matching + '.service': 'nekopass-agent', matching + '-uninstall.service': 'nekopass-agent-uninstall'}
+                output = 'path=' + base + '/bin/' + binaries.get(unit, 'nekopass-update') + ' ; argv[]=fixture'
         return subprocess.CompletedProcess(args, 0, output, '')
 
     def put(self, name, content='fixture'):
@@ -70,7 +73,7 @@ class UninstallerTests(unittest.TestCase):
         self.services.add(service)
         base = '/opt/nekopass' if service == 'nekopass-agent' else '/opt/' + service
         config = '/etc/nekopass' if service == 'nekopass-agent' else '/etc/' + service
-        for name in ['nekopass-agent', 'nekopass-agent.previous', 'nekopass-update', 'nekopass-agent-update-source.json']:
+        for name in ['nekopass-agent', 'nekopass-agent.previous', 'nekopass-agent-uninstall', 'nekopass-update', 'nekopass-agent-update-source.json']:
             self.put(base + '/bin/' + name)
         self.put(config + '/agent.env', 'NEKOPASS_NODE_TOKEN=fixture-secret-never-print')
         self.put(config + '/agent.env.bak.fixture')
@@ -110,6 +113,87 @@ class UninstallerTests(unittest.TestCase):
         self.assertTrue((self.root / 'etc/nekopass/agent.env').exists())
         self.assertTrue((self.root / 'usr/local/bin/nekopassctl').exists())
         self.assertFalse(any('nekopass-agent.service' in call for call in self.calls))
+
+    def request(self, service, authorize=True):
+        binary = self.module.path(self.module.install_base(service) + '/bin/nekopass-agent')
+        reporter_fixture = self.put('/staged-reporter-output')
+        reporter_fixture.chmod(0o700)
+        ticket = 'a' * 64
+        results = []
+
+        def send(args, env, fd):
+            self.assertEqual(args[:3], [f'/proc/self/fd/{fd}', '-uninstall-result', ticket])
+            self.assertEqual(env['NEKOPASS_NODE_TOKEN'], 'fixture-secret-never-print')
+            results.append(args[3:])
+            if args[-1] == '-uninstall-check':
+                self.assertTrue(binary.exists())
+                self.assertFalse(any(call[:2] == ('systemctl', 'stop') for call in self.calls))
+                return authorize
+            return True
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.object(self.module, 'consume_request', return_value=ticket))
+            stack.enter_context(patch.object(self.module, 'report_environment', return_value={'NEKOPASS_NODE_TOKEN': 'fixture-secret-never-print'}))
+            stack.enter_context(patch.object(self.module, 'open_regular', side_effect=lambda *a, **kw: reporter_fixture.open('rb')))
+            if os.name != 'posix':
+                stack.enter_context(patch.object(self.module.os, 'fstat', return_value=types.SimpleNamespace(st_mode=stat.S_IXUSR)))
+            stack.enter_context(patch.object(self.module.time, 'sleep'))
+            stack.enter_context(patch.object(self.module, 'send_result', side_effect=send))
+            stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+            if not authorize:
+                with self.assertRaisesRegex(RuntimeError, '确认卸载授权'):
+                    self.module.main(['--service-name', service, '--request'])
+                self.assertTrue(binary.exists())
+            else:
+                code = self.module.main(['--service-name', service, '--request'])
+                self.assertEqual(binary.exists(), code != 0)
+        return results
+
+    def test_authorized_remote_request_removes_only_its_own_agent(self):
+        service = 'nekopass-agent'
+        sibling = 'nekopass-agent-hk1'
+        self.install(service)
+        self.install(sibling)
+        retained = [self.put('/opt/nekopass/bin/nekopass'), self.put('/etc/nekopass/control.env'),
+                    self.root / 'opt/nekopass/bin/nekopass-update', self.root / 'usr/local/bin/nekopassctl',
+                    self.root / 'opt/nekopass-agent-hk1/bin/nekopass-agent']
+        self.assertEqual(self.request(service), [['-uninstall-check'], []])
+        for file in retained:
+            self.assertTrue(file.is_file(), file)
+        self.assertIn(('systemctl', 'stop', service + '-uninstall.path'), self.calls)
+        self.assertNotIn(('systemctl', 'stop', service + '-uninstall.service'), self.calls)
+        self.assertFalse(any(sibling in unit for call in self.calls for unit in call))
+        for unit in self.module.unit_names(service):
+            self.assertFalse((self.root / 'etc/systemd/system' / unit).exists())
+
+    def test_unauthorized_or_busy_remote_request_leaves_agent_running(self):
+        service = 'nekopass-agent-hk1'
+        self.install(service)
+        self.assertEqual(self.request(service, authorize=False), [['-uninstall-check']])
+        with patch.object(self.fcntl, 'flock', side_effect=BlockingIOError):
+            checked, failure = self.request(service)
+        self.assertEqual(checked, ['-uninstall-check'])
+        self.assertEqual(failure[0], '-uninstall-error')
+        self.assertNotIn('fixture-secret', failure[1])
+        self.assertFalse(any(call[:2] == ('systemctl', 'stop') for call in self.calls))
+
+    def test_remote_request_is_claimed_before_it_is_read(self):
+        service = 'nekopass-agent-hk1'
+        ticket = 'b' * 64
+        request = self.put('/var/lib/' + service + '/uninstall-request.json', '{"ticket":"' + ticket + '"}')
+        self.pwd.getpwnam = lambda _: types.SimpleNamespace(pw_uid=999)
+
+        def open_claimed(claimed, owner):
+            self.assertFalse(request.exists())
+            self.assertEqual(owner, 999)
+            self.assertEqual(claimed.parent.parent, self.root / 'var/lib')
+            return claimed.open('rb')
+
+        with patch.object(self.module, 'open_regular', side_effect=open_claimed):
+            self.assertEqual(self.module.consume_request(service), ticket)
+        self.assertFalse(request.exists())
+        self.assertEqual(list((self.root / 'var/lib').iterdir()), [request.parent])
 
     def test_full_uninstall_without_panel_removes_shared_helpers_and_is_idempotent(self):
         self.install('nekopass-agent')

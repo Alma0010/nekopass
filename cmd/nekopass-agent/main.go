@@ -27,6 +27,9 @@ func run() error {
 	server := flag.String("server", os.Getenv("NEKOPASS_SERVER"), "control endpoint: https://host:port (verified TLS) or http://host:port (h2c)")
 	statePath := flag.String("state", "/var/lib/nekopass-agent/state.db", "durable state; never delete or clone between nodes")
 	showVersion := flag.Bool("version", false, "show build version")
+	uninstallTicket := flag.String("uninstall-result", "", "report a managed service uninstall")
+	uninstallError := flag.String("uninstall-error", "", "report a managed uninstall failure")
+	uninstallCheck := flag.Bool("uninstall-check", false, "verify the managed uninstall is still authorized")
 	flag.Parse()
 	if version != "dev" {
 		release.Version = version
@@ -34,6 +37,9 @@ func run() error {
 	if *showVersion {
 		fmt.Printf("nekopass-agent %s %s/%s\n", release.Version, runtime.GOOS, runtime.GOARCH)
 		return nil
+	}
+	if *uninstallTicket != "" || *uninstallCheck || *uninstallError != "" {
+		return agent.ReportUninstall(*server, os.Getenv("NEKOPASS_NODE_TOKEN"), *uninstallTicket, *uninstallError, *uninstallCheck)
 	}
 	if err := os.MkdirAll(filepath.Dir(*statePath), 0700); err != nil {
 		return err
@@ -54,6 +60,7 @@ func run() error {
 			return err
 		}
 	}
+	engine.SetUninstallDirectory(filepath.Dir(*statePath), os.Getenv("NEKOPASS_AGENT_UNINSTALL_UNIT"))
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	slog.Info("agent starting", "server", *server)

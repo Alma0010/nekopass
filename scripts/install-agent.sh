@@ -3,15 +3,17 @@
 set -Eeuo pipefail
 umask 077
 
-# Release packaging embeds the manager here; repository runs use the sibling file.
+# Release packaging embeds these companions; repository runs use the sibling files.
 write_manager_payload() { return 1; }
 # PACKAGED_MANAGER
 write_updater_payload() { return 1; }
 # PACKAGED_UPDATER
+write_uninstaller_payload() { return 1; }
+# PACKAGED_UNINSTALLER
 
 SERVER=''; TOKEN=''; TOKEN_FILE=''; PANEL_URL=''; INSTALL_TOKEN=''
 DOWNLOAD_BASE='https://github.com/Alma0010/nekopass/releases/download'
-VERSION='v0.20.4'; ARCH='auto'; BINARY_URL=''
+VERSION='v0.20.5'; ARCH='auto'; BINARY_URL=''
 SERVICE='nekopass-agent'
 NO_START=0; DRY_RUN=0; WORK=''; CHANGED=0; WAS_ACTIVE=0; WAS_ENABLED=0; STATE_BACKUP=''; RESET_STATE=0
 usage() {
@@ -20,7 +22,7 @@ Nekopass Agent installer (Linux + systemd, run as root)
 
 Direct mode:
   bash install-agent.sh -s https://panel.example.com:9443 -t NODE_TOKEN \
-    -d https://github.com/Alma0010/nekopass/releases/download -v v0.20.4
+    -d https://github.com/Alma0010/nekopass/releases/download -v v0.20.5
 
 Legacy installation credential (compatibility only):
   bash install-agent.sh -p https://panel.example.com -i INSTALL_TOKEN
@@ -31,7 +33,7 @@ Legacy installation credential (compatibility only):
   -p, --panel-url URL          Legacy install-token API root; unused with --server/--token
   -i, --install-token TOKEN    One-time node-specific installation credential
   -d, --download-base URL      HTTPS release directory
-  -v, --version VERSION        Release directory name; default v0.20.4
+  -v, --version VERSION        Release directory name; default v0.20.5
   -a, --arch ARCH              auto, amd64 or arm64
       --binary-url URL        Override architecture binary download URL
       --service-name NAME     Default nekopass-agent; isolated suffix allowed
@@ -94,36 +96,40 @@ else
  BIN="/opt/$SERVICE/bin/nekopass-agent"; CONFIG_DIR="/etc/$SERVICE"
 fi
 ENV_FILE="$CONFIG_DIR/agent.env"; STATE_DIR="/var/lib/$SERVICE"; UNIT="/etc/systemd/system/$SERVICE.service"
+UNINSTALLER="$(dirname "$BIN")/nekopass-agent-uninstall"
+UNINSTALL_UNIT="/etc/systemd/system/$SERVICE-uninstall.service"
+UNINSTALL_PATH="/etc/systemd/system/$SERVICE-uninstall.path"
+UNINSTALL_EXEC="ExecStart=$UNINSTALLER --service-name $SERVICE --request"
 for target in "$(dirname "$BIN")" "$CONFIG_DIR" "$STATE_DIR" /etc/systemd/system; do
  [[ "$(realpath -m "$target")" == "$target" ]] || die "Refusing symlinked installation directory: $target"
 done
-for target in "$BIN" "$ENV_FILE" "$UNIT" "$(dirname "$BIN")/nekopass-agent-update-source.json"; do [[ ! -L "$target" ]] || die "Refusing symlink: $target"; done
+for target in "$BIN" "$ENV_FILE" "$UNIT" "$UNINSTALLER" "$UNINSTALL_UNIT" "$UNINSTALL_PATH" "$(dirname "$BIN")/nekopass-agent-update-source.json"; do [[ ! -L "$target" ]] || die "Refusing symlink: $target"; done
+if [[ "$SERVICE" == nekopass-agent-uninstall && -e /etc/systemd/system/nekopass-agent-uninstall.path ]]; then
+ die 'Service name conflicts with the default Agent uninstall helper'
+fi
+if [[ -e "$UNINSTALL_UNIT" ]] && ! grep -Fxq -- "$UNINSTALL_EXEC" "$UNINSTALL_UNIT"; then
+ die "Existing unit conflicts with the Agent uninstall helper: $UNINSTALL_UNIT"
+fi
+if [[ -e "$UNINSTALL_PATH" ]] && ! grep -Fxq -- "PathExists=$STATE_DIR/uninstall-request.json" "$UNINSTALL_PATH"; then
+ die "Existing unit conflicts with the Agent uninstall watcher: $UNINSTALL_PATH"
+fi
 WORK=$(mktemp -d /tmp/nekopass-install.XXXXXXXX)
 [[ "$WORK" == /tmp/nekopass-install.* ]] || die 'Invalid temporary directory'
 MANAGER_SOURCE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/nekopassctl.sh"
 UPDATER_SOURCE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/nekopass-update.py"
-if ! write_updater_payload > "$WORK/nekopass-update"; then
- [[ -f "$UPDATER_SOURCE" ]] || die 'Use the GitHub release installer (updater payload missing)'
- cp "$UPDATER_SOURCE" "$WORK/nekopass-update"
-fi
-if ! write_manager_payload > "$WORK/nekopassctl"; then
- if [[ -f "$MANAGER_SOURCE" ]]; then
-  tr -d '\r' < "$MANAGER_SOURCE" > "$WORK/nekopassctl"
- else
-  rm -f "$WORK/nekopassctl"
-  log 'CLI companion missing. Use the packaged installer to install nekopassctl automatically.'
- fi
-fi
+UNINSTALLER_SOURCE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/uninstall-agent.sh"
 cleanup() {
  local status=$?
  trap - EXIT
  if ((status != 0 && CHANGED)); then
   log 'Installation failed; stopping the service'
   systemctl stop "$SERVICE" >/dev/null 2>&1 || true
+  systemctl stop "$SERVICE-uninstall.path" >/dev/null 2>&1 || true
   if [[ ! -f "$WORK/backup-env" ]]; then
    # The Agent may already have registered its durable identity. Keep its
    # credentials alongside that state so a fresh command can safely retry.
    systemctl disable "$SERVICE" >/dev/null 2>&1 || true
+   systemctl disable "$SERVICE-uninstall.path" >/dev/null 2>&1 || true
    log "New installation files retained at $CONFIG_DIR; retry without deleting state."
    rm -rf -- "$WORK"
    exit "$status"
@@ -135,11 +141,15 @@ cleanup() {
    mv -- "$STATE_BACKUP" "$STATE_DIR/state.db"
   fi
   log 'Restoring previous installation files'
-  for key in binary env unit; do
-   case "$key" in binary) dest=$BIN;; env) dest=$ENV_FILE;; unit) dest=$UNIT;; esac
+  for key in binary env unit uninstaller uninstall-unit uninstall-path; do
+   case "$key" in binary) dest=$BIN;; env) dest=$ENV_FILE;; unit) dest=$UNIT;;
+    uninstaller) dest=$UNINSTALLER;; uninstall-unit) dest=$UNINSTALL_UNIT;; uninstall-path) dest=$UNINSTALL_PATH;; esac
    if [[ -f "$WORK/backup-$key" ]]; then cp -p "$WORK/backup-$key" "$dest"; else rm -f -- "$dest"; fi
   done
   systemctl daemon-reload >/dev/null 2>&1 || true
+  if ((WAS_UNINSTALL_ENABLED)); then systemctl enable "$SERVICE-uninstall.path" >/dev/null 2>&1 || true
+  else systemctl disable "$SERVICE-uninstall.path" >/dev/null 2>&1 || true; fi
+  if ((WAS_UNINSTALL_ACTIVE)); then systemctl start "$SERVICE-uninstall.path" >/dev/null 2>&1 || true; fi
   if ((WAS_ENABLED)); then systemctl enable "$SERVICE" >/dev/null 2>&1 || true; else systemctl disable "$SERVICE" >/dev/null 2>&1 || true; fi
   if ((WAS_ACTIVE)); then systemctl start "$SERVICE" >/dev/null 2>&1 || true; fi
  fi
@@ -147,6 +157,23 @@ cleanup() {
  exit "$status"
 }
 trap cleanup EXIT
+if ! write_updater_payload > "$WORK/nekopass-update"; then
+ [[ -f "$UPDATER_SOURCE" ]] || die 'Use the GitHub release installer (updater payload missing)'
+ tr -d '\r' < "$UPDATER_SOURCE" > "$WORK/nekopass-update"
+fi
+if ! write_manager_payload > "$WORK/nekopassctl"; then
+ if [[ -f "$MANAGER_SOURCE" ]]; then
+  tr -d '\r' < "$MANAGER_SOURCE" > "$WORK/nekopassctl"
+ else
+  rm -f "$WORK/nekopassctl"
+  log 'CLI companion missing. Use the packaged installer to install nekopassctl automatically.'
+ fi
+fi
+if ! write_uninstaller_payload > "$WORK/nekopass-agent-uninstall"; then
+ [[ -f "$UNINSTALLER_SOURCE" ]] || die 'Use the GitHub release installer (uninstaller payload missing)'
+ tr -d '\r' < "$UNINSTALLER_SOURCE" > "$WORK/nekopass-agent-uninstall"
+fi
+bash -n "$WORK/nekopass-agent-uninstall"
 read_env() {
  python3 - "$ENV_FILE" "$1" <<'PY'
 import pathlib,sys
@@ -249,13 +276,24 @@ REPORTED_VERSION=$(awk '{print $2}' "$WORK/version-check")
 [[ "$VERSION" == latest || "$VERSION" == "$REPORTED_VERSION" ]] || die 'Downloaded binary version mismatch'
 VERSION=$REPORTED_VERSION
 id -u "$SERVICE" >/dev/null 2>&1 || useradd --system --user-group --home-dir /nonexistent --shell /usr/sbin/nologin "$SERVICE"
-install -d -m 755 "$(dirname "$BIN")" "$CONFIG_DIR"
-for key in binary env unit; do
- case "$key" in binary) src=$BIN;; env) src=$ENV_FILE;; unit) src=$UNIT;; esac
+install -d -o root -g root -m 755 "$(dirname "$BIN")" "$CONFIG_DIR"
+for key in binary env unit uninstaller uninstall-unit uninstall-path; do
+ case "$key" in binary) src=$BIN;; env) src=$ENV_FILE;; unit) src=$UNIT;;
+  uninstaller) src=$UNINSTALLER;; uninstall-unit) src=$UNINSTALL_UNIT;; uninstall-path) src=$UNINSTALL_PATH;; esac
  [[ ! -f "$src" ]] || cp -p "$src" "$WORK/backup-$key"
 done
 if systemctl is-active --quiet "$SERVICE"; then WAS_ACTIVE=1; fi
 if systemctl is-enabled --quiet "$SERVICE" 2>/dev/null; then WAS_ENABLED=1; fi
+WAS_UNINSTALL_ACTIVE=0; WAS_UNINSTALL_ENABLED=0
+if systemctl is-enabled --quiet "$SERVICE-uninstall.path" 2>/dev/null; then WAS_UNINSTALL_ENABLED=1; fi
+if systemctl is-active --quiet "$SERVICE-uninstall.path"; then
+ WAS_UNINSTALL_ACTIVE=1
+ systemctl stop "$SERVICE-uninstall.path"
+fi
+if systemctl is-active --quiet "$SERVICE-uninstall.service"; then
+ if ((WAS_UNINSTALL_ACTIVE)); then systemctl start "$SERVICE-uninstall.path"; fi
+ die 'The Agent uninstall helper is running; wait for it to finish before installing'
+fi
 CHANGED=1
 systemctl stop "$SERVICE" 2>/dev/null || true
 if ((RESET_STATE)); then
@@ -278,6 +316,7 @@ Type=simple
 User=$SERVICE
 Group=$SERVICE
 EnvironmentFile=$ENV_FILE
+Environment=NEKOPASS_AGENT_UNINSTALL_UNIT=$SERVICE-uninstall.path
 ExecStart=$BIN -state $STATE_DIR/state.db
 Restart=on-failure
 RestartSec=3
@@ -328,8 +367,35 @@ WantedBy=multi-user.target
 UNIT
 install -m 644 "$WORK/update.service" "/etc/systemd/system/$SERVICE-update.service"
 install -m 644 "$WORK/update.path" "/etc/systemd/system/$SERVICE-update.path"
+install -o root -g root -m 700 "$WORK/nekopass-agent-uninstall" "$UNINSTALLER"
+cat > "$WORK/uninstall.service" <<UNIT
+[Unit]
+Description=Uninstall the requested Nekopass Agent instance
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+$UNINSTALL_EXEC
+TimeoutStartSec=240
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+UNIT
+cat > "$WORK/uninstall.path" <<UNIT
+[Unit]
+Description=Watch Nekopass Agent uninstall requests
+[Path]
+PathExists=$STATE_DIR/uninstall-request.json
+Unit=$SERVICE-uninstall.service
+[Install]
+WantedBy=multi-user.target
+UNIT
+install -o root -g root -m 644 "$WORK/uninstall.service" "$UNINSTALL_UNIT"
+install -o root -g root -m 644 "$WORK/uninstall.path" "$UNINSTALL_PATH"
 systemctl daemon-reload
-systemctl enable --now "$SERVICE-update.path" >/dev/null
+systemctl enable --now "$SERVICE-update.path" "$SERVICE-uninstall.path" >/dev/null
 if ((!NO_START)); then
  systemctl enable "$SERVICE" >/dev/null
  systemctl restart "$SERVICE"

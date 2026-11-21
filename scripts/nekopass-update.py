@@ -348,16 +348,19 @@ def main():
     if args.setup_panel:
         setup_panel_update(args.service)
         return 0
-    # Ordinary CLI updates also prepare/repair the bundled panel integration,
-    # including when the installed binary already is the latest version.
-    if not args.service.startswith('nekopass-agent') and not args.check and not args.request:
-        setup_panel_update(args.service)
     lock = pathlib.Path('/run/lock') / (args.service + '-update.lock')
     with lock.open('w') as locked:
         fcntl.flock(locked, fcntl.LOCK_EX)
         directory = pathlib.Path('/var/lib') / args.service
         request = None
         try:
+            # Repair the integration under the uninstall lock. A queued update
+            # must not recreate the units of a panel removed while it waited.
+            if not args.service.startswith('nekopass-agent') and not args.check and not args.request:
+                binary = pathlib.Path('/opt') / args.service / 'bin/nekopass'
+                if not binary.is_file():
+                    raise ValueError('Panel is no longer installed')
+                setup_panel_update(args.service)
             if args.request:
                 if directory.resolve() != directory:
                     raise ValueError('Invalid update state directory')

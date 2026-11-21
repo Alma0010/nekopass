@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Nekopass API
-  version: 0.20.4
+  version: 0.20.5
   description: HTTP backend; optional HTTPS termination at a trusted reverse proxy. Administrator-created accounts or optional email-verified registration. JSON requests, same-origin browser access. Byte counters combine both TCP directions once.
 servers:
   - url: /api/v1
@@ -1153,18 +1153,10 @@ paths:
         '200': {description: Updated}
         '409': {$ref: '#/components/responses/Error'}
     delete:
-      summary: Admin deletes a disabled node without active rule references; offline nodes do not wait for synchronization
-      parameters:
-        - in: query
-          name: force
-          schema: {type: boolean, default: false}
-          description: Explicit second confirmation for nodes with usage history. Preserves archived usage and outstanding quota allocations while physically deleting the node and its credentials. Does not bypass active rules, enabled state or online pending synchronization.
+      summary: Admin deletes an unused plan
       responses:
         '200': {description: Deleted}
-        '400': {$ref: '#/components/responses/Error'}
-        '403': {$ref: '#/components/responses/Error'}
-        '404': {$ref: '#/components/responses/Error'}
-        '409': {description: 'Node must be disabled, still has rules, is online awaiting disable synchronization, or requires explicit force=true. In the last case the JSON code is node_delete_confirmation_required.'}
+        '409': {$ref: '#/components/responses/Error'}
   /admin/nodes:
     get:
       summary: Admin lists nodes, including the saved per-node token; legacy hash-only nodes show empty until they connect or are edited
@@ -1193,10 +1185,23 @@ paths:
         '200': {description: Updated}
         '409': {$ref: '#/components/responses/Error'}
     delete:
-      summary: Admin deletes unused resource; referenced resources must be disabled instead
+      summary: Queue the corresponding Agent service uninstall and remove the node after confirmation
+      parameters:
+        - in: query
+          name: force
+          schema: {type: boolean, default: false}
+          description: Confirm deletion of nodes with usage history. Historical usage and outstanding quota allocations remain archived.
+        - in: query
+          name: record_only
+          schema: {type: boolean, default: false}
+          description: Remove only the panel record and its credentials. An uninstall already authorized on the host may still finish.
       responses:
-        '200': {description: Deleted}
-        '409': {$ref: '#/components/responses/Error'}
+        '200': {description: Unbound node or explicitly requested panel record removed}
+        '202': {description: Uninstall queued. Offline nodes resume when the bound Agent reconnects.}
+        '400': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {description: 'Node is enabled, has rule references, is synchronizing or updating, needs a manual uninstall (node_uninstall_manual_required), or needs ledger confirmation (node_delete_confirmation_required).'}
   /admin/node-groups:
     get:
       summary: Admin lists node-groups

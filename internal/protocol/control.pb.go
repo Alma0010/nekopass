@@ -21,6 +21,102 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type UninstallReport struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ticket        string                 `protobuf:"bytes,1,opt,name=ticket,proto3" json:"ticket,omitempty"`
+	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	CheckOnly     bool                   `protobuf:"varint,3,opt,name=check_only,json=checkOnly,proto3" json:"check_only,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UninstallReport) Reset() {
+	*x = UninstallReport{}
+	mi := &file_api_control_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UninstallReport) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UninstallReport) ProtoMessage() {}
+
+func (x *UninstallReport) ProtoReflect() protoreflect.Message {
+	mi := &file_api_control_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UninstallReport.ProtoReflect.Descriptor instead.
+func (*UninstallReport) Descriptor() ([]byte, []int) {
+	return file_api_control_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *UninstallReport) GetTicket() string {
+	if x != nil {
+		return x.Ticket
+	}
+	return ""
+}
+
+func (x *UninstallReport) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *UninstallReport) GetCheckOnly() bool {
+	if x != nil {
+		return x.CheckOnly
+	}
+	return false
+}
+
+type UninstallResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UninstallResponse) Reset() {
+	*x = UninstallResponse{}
+	mi := &file_api_control_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UninstallResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UninstallResponse) ProtoMessage() {}
+
+func (x *UninstallResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_control_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UninstallResponse.ProtoReflect.Descriptor instead.
+func (*UninstallResponse) Descriptor() ([]byte, []int) {
+	return file_api_control_proto_rawDescGZIP(), []int{1}
+}
+
 type Usage struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	UserId         int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
@@ -37,7 +133,7 @@ type Usage struct {
 
 func (x *Usage) Reset() {
 	*x = Usage{}
-	mi := &file_api_control_proto_msgTypes[0]
+	mi := &file_api_control_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -49,7 +145,7 @@ func (x *Usage) String() string {
 func (*Usage) ProtoMessage() {}
 
 func (x *Usage) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[0]
+	mi := &file_api_control_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -62,7 +158,7 @@ func (x *Usage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Usage.ProtoReflect.Descriptor instead.
 func (*Usage) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{0}
+	return file_api_control_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *Usage) GetUserId() int64 {
@@ -131,7 +227,7 @@ type RuleUsage struct {
 
 func (x *RuleUsage) Reset() {
 	*x = RuleUsage{}
-	mi := &file_api_control_proto_msgTypes[1]
+	mi := &file_api_control_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -143,7 +239,7 @@ func (x *RuleUsage) String() string {
 func (*RuleUsage) ProtoMessage() {}
 
 func (x *RuleUsage) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[1]
+	mi := &file_api_control_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -156,7 +252,7 @@ func (x *RuleUsage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuleUsage.ProtoReflect.Descriptor instead.
 func (*RuleUsage) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{1}
+	return file_api_control_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *RuleUsage) GetRuleId() int64 {
@@ -193,13 +289,14 @@ type AgentMessage struct {
 	PublicIp                    *PublicIPStatus        `protobuf:"bytes,16,opt,name=public_ip,json=publicIp,proto3" json:"public_ip,omitempty"`
 	IpRecoveryStatus            *IPRecoveryStatus      `protobuf:"bytes,17,opt,name=ip_recovery_status,json=ipRecoveryStatus,proto3" json:"ip_recovery_status,omitempty"`
 	UpdateDownloadBaseSupported bool                   `protobuf:"varint,18,opt,name=update_download_base_supported,json=updateDownloadBaseSupported,proto3" json:"update_download_base_supported,omitempty"`
+	UninstallSupported          bool                   `protobuf:"varint,19,opt,name=uninstall_supported,json=uninstallSupported,proto3" json:"uninstall_supported,omitempty"`
 	unknownFields               protoimpl.UnknownFields
 	sizeCache                   protoimpl.SizeCache
 }
 
 func (x *AgentMessage) Reset() {
 	*x = AgentMessage{}
-	mi := &file_api_control_proto_msgTypes[2]
+	mi := &file_api_control_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -211,7 +308,7 @@ func (x *AgentMessage) String() string {
 func (*AgentMessage) ProtoMessage() {}
 
 func (x *AgentMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[2]
+	mi := &file_api_control_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -224,7 +321,7 @@ func (x *AgentMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentMessage.ProtoReflect.Descriptor instead.
 func (*AgentMessage) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{2}
+	return file_api_control_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *AgentMessage) GetUsage() []*Usage {
@@ -353,6 +450,13 @@ func (x *AgentMessage) GetUpdateDownloadBaseSupported() bool {
 	return false
 }
 
+func (x *AgentMessage) GetUninstallSupported() bool {
+	if x != nil {
+		return x.UninstallSupported
+	}
+	return false
+}
+
 type PublicIPStatus struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Ipv4          string                 `protobuf:"bytes,1,opt,name=ipv4,proto3" json:"ipv4,omitempty"`
@@ -364,7 +468,7 @@ type PublicIPStatus struct {
 
 func (x *PublicIPStatus) Reset() {
 	*x = PublicIPStatus{}
-	mi := &file_api_control_proto_msgTypes[3]
+	mi := &file_api_control_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -376,7 +480,7 @@ func (x *PublicIPStatus) String() string {
 func (*PublicIPStatus) ProtoMessage() {}
 
 func (x *PublicIPStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[3]
+	mi := &file_api_control_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -389,7 +493,7 @@ func (x *PublicIPStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublicIPStatus.ProtoReflect.Descriptor instead.
 func (*PublicIPStatus) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{3}
+	return file_api_control_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *PublicIPStatus) GetIpv4() string {
@@ -432,7 +536,7 @@ type UserPolicy struct {
 
 func (x *UserPolicy) Reset() {
 	*x = UserPolicy{}
-	mi := &file_api_control_proto_msgTypes[4]
+	mi := &file_api_control_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -444,7 +548,7 @@ func (x *UserPolicy) String() string {
 func (*UserPolicy) ProtoMessage() {}
 
 func (x *UserPolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[4]
+	mi := &file_api_control_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -457,7 +561,7 @@ func (x *UserPolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UserPolicy.ProtoReflect.Descriptor instead.
 func (*UserPolicy) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{4}
+	return file_api_control_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *UserPolicy) GetId() int64 {
@@ -584,7 +688,7 @@ type Rule struct {
 
 func (x *Rule) Reset() {
 	*x = Rule{}
-	mi := &file_api_control_proto_msgTypes[5]
+	mi := &file_api_control_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -596,7 +700,7 @@ func (x *Rule) String() string {
 func (*Rule) ProtoMessage() {}
 
 func (x *Rule) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[5]
+	mi := &file_api_control_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -609,7 +713,7 @@ func (x *Rule) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Rule.ProtoReflect.Descriptor instead.
 func (*Rule) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{5}
+	return file_api_control_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *Rule) GetId() int64 {
@@ -905,7 +1009,7 @@ type EgressPeer struct {
 
 func (x *EgressPeer) Reset() {
 	*x = EgressPeer{}
-	mi := &file_api_control_proto_msgTypes[6]
+	mi := &file_api_control_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -917,7 +1021,7 @@ func (x *EgressPeer) String() string {
 func (*EgressPeer) ProtoMessage() {}
 
 func (x *EgressPeer) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[6]
+	mi := &file_api_control_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -930,7 +1034,7 @@ func (x *EgressPeer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EgressPeer.ProtoReflect.Descriptor instead.
 func (*EgressPeer) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{6}
+	return file_api_control_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *EgressPeer) GetNodeId() int64 {
@@ -1029,7 +1133,7 @@ type OriginTLSConfig struct {
 
 func (x *OriginTLSConfig) Reset() {
 	*x = OriginTLSConfig{}
-	mi := &file_api_control_proto_msgTypes[7]
+	mi := &file_api_control_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1041,7 +1145,7 @@ func (x *OriginTLSConfig) String() string {
 func (*OriginTLSConfig) ProtoMessage() {}
 
 func (x *OriginTLSConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[7]
+	mi := &file_api_control_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1054,7 +1158,7 @@ func (x *OriginTLSConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OriginTLSConfig.ProtoReflect.Descriptor instead.
 func (*OriginTLSConfig) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{7}
+	return file_api_control_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *OriginTLSConfig) GetEnabled() bool {
@@ -1110,7 +1214,7 @@ type SharedTLSInbound struct {
 
 func (x *SharedTLSInbound) Reset() {
 	*x = SharedTLSInbound{}
-	mi := &file_api_control_proto_msgTypes[8]
+	mi := &file_api_control_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1122,7 +1226,7 @@ func (x *SharedTLSInbound) String() string {
 func (*SharedTLSInbound) ProtoMessage() {}
 
 func (x *SharedTLSInbound) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[8]
+	mi := &file_api_control_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1135,7 +1239,7 @@ func (x *SharedTLSInbound) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SharedTLSInbound.ProtoReflect.Descriptor instead.
 func (*SharedTLSInbound) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{8}
+	return file_api_control_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *SharedTLSInbound) GetId() int64 {
@@ -1242,7 +1346,7 @@ type ACMEHTTPEndpoint struct {
 
 func (x *ACMEHTTPEndpoint) Reset() {
 	*x = ACMEHTTPEndpoint{}
-	mi := &file_api_control_proto_msgTypes[9]
+	mi := &file_api_control_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1254,7 +1358,7 @@ func (x *ACMEHTTPEndpoint) String() string {
 func (*ACMEHTTPEndpoint) ProtoMessage() {}
 
 func (x *ACMEHTTPEndpoint) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[9]
+	mi := &file_api_control_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1267,7 +1371,7 @@ func (x *ACMEHTTPEndpoint) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ACMEHTTPEndpoint.ProtoReflect.Descriptor instead.
 func (*ACMEHTTPEndpoint) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{9}
+	return file_api_control_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ACMEHTTPEndpoint) GetPort() int32 {
@@ -1295,7 +1399,7 @@ type TunnelLink struct {
 
 func (x *TunnelLink) Reset() {
 	*x = TunnelLink{}
-	mi := &file_api_control_proto_msgTypes[10]
+	mi := &file_api_control_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1307,7 +1411,7 @@ func (x *TunnelLink) String() string {
 func (*TunnelLink) ProtoMessage() {}
 
 func (x *TunnelLink) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[10]
+	mi := &file_api_control_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1320,7 +1424,7 @@ func (x *TunnelLink) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TunnelLink.ProtoReflect.Descriptor instead.
 func (*TunnelLink) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{10}
+	return file_api_control_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *TunnelLink) GetIngressNodeId() int64 {
@@ -1355,7 +1459,7 @@ type TunnelCongestion struct {
 
 func (x *TunnelCongestion) Reset() {
 	*x = TunnelCongestion{}
-	mi := &file_api_control_proto_msgTypes[11]
+	mi := &file_api_control_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1367,7 +1471,7 @@ func (x *TunnelCongestion) String() string {
 func (*TunnelCongestion) ProtoMessage() {}
 
 func (x *TunnelCongestion) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[11]
+	mi := &file_api_control_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1380,7 +1484,7 @@ func (x *TunnelCongestion) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TunnelCongestion.ProtoReflect.Descriptor instead.
 func (*TunnelCongestion) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{11}
+	return file_api_control_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *TunnelCongestion) GetBrutal() bool {
@@ -1416,7 +1520,7 @@ type MuxConfig struct {
 
 func (x *MuxConfig) Reset() {
 	*x = MuxConfig{}
-	mi := &file_api_control_proto_msgTypes[12]
+	mi := &file_api_control_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1428,7 +1532,7 @@ func (x *MuxConfig) String() string {
 func (*MuxConfig) ProtoMessage() {}
 
 func (x *MuxConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[12]
+	mi := &file_api_control_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1441,7 +1545,7 @@ func (x *MuxConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MuxConfig.ProtoReflect.Descriptor instead.
 func (*MuxConfig) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{12}
+	return file_api_control_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *MuxConfig) GetEnabled() bool {
@@ -1487,7 +1591,7 @@ type EgressRule struct {
 
 func (x *EgressRule) Reset() {
 	*x = EgressRule{}
-	mi := &file_api_control_proto_msgTypes[13]
+	mi := &file_api_control_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1499,7 +1603,7 @@ func (x *EgressRule) String() string {
 func (*EgressRule) ProtoMessage() {}
 
 func (x *EgressRule) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[13]
+	mi := &file_api_control_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1512,7 +1616,7 @@ func (x *EgressRule) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EgressRule.ProtoReflect.Descriptor instead.
 func (*EgressRule) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{13}
+	return file_api_control_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *EgressRule) GetRuleId() int64 {
@@ -1576,13 +1680,14 @@ type ControlMessage struct {
 	Update            *UpdateRequest         `protobuf:"bytes,8,opt,name=update,proto3" json:"update,omitempty"`
 	ControlEndpoint   string                 `protobuf:"bytes,9,opt,name=control_endpoint,json=controlEndpoint,proto3" json:"control_endpoint,omitempty"`
 	StateRestore      *StateRestore          `protobuf:"bytes,10,opt,name=state_restore,json=stateRestore,proto3" json:"state_restore,omitempty"`
+	UninstallTicket   string                 `protobuf:"bytes,11,opt,name=uninstall_ticket,json=uninstallTicket,proto3" json:"uninstall_ticket,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
 
 func (x *ControlMessage) Reset() {
 	*x = ControlMessage{}
-	mi := &file_api_control_proto_msgTypes[14]
+	mi := &file_api_control_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1594,7 +1699,7 @@ func (x *ControlMessage) String() string {
 func (*ControlMessage) ProtoMessage() {}
 
 func (x *ControlMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[14]
+	mi := &file_api_control_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1607,7 +1712,7 @@ func (x *ControlMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ControlMessage.ProtoReflect.Descriptor instead.
 func (*ControlMessage) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{14}
+	return file_api_control_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ControlMessage) GetRevision() int64 {
@@ -1680,6 +1785,13 @@ func (x *ControlMessage) GetStateRestore() *StateRestore {
 	return nil
 }
 
+func (x *ControlMessage) GetUninstallTicket() string {
+	if x != nil {
+		return x.UninstallTicket
+	}
+	return ""
+}
+
 type UserStateBaseline struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	UserId             int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
@@ -1697,7 +1809,7 @@ type UserStateBaseline struct {
 
 func (x *UserStateBaseline) Reset() {
 	*x = UserStateBaseline{}
-	mi := &file_api_control_proto_msgTypes[15]
+	mi := &file_api_control_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1709,7 +1821,7 @@ func (x *UserStateBaseline) String() string {
 func (*UserStateBaseline) ProtoMessage() {}
 
 func (x *UserStateBaseline) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[15]
+	mi := &file_api_control_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1722,7 +1834,7 @@ func (x *UserStateBaseline) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UserStateBaseline.ProtoReflect.Descriptor instead.
 func (*UserStateBaseline) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{15}
+	return file_api_control_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *UserStateBaseline) GetUserId() int64 {
@@ -1799,7 +1911,7 @@ type StateRestore struct {
 
 func (x *StateRestore) Reset() {
 	*x = StateRestore{}
-	mi := &file_api_control_proto_msgTypes[16]
+	mi := &file_api_control_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1811,7 +1923,7 @@ func (x *StateRestore) String() string {
 func (*StateRestore) ProtoMessage() {}
 
 func (x *StateRestore) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[16]
+	mi := &file_api_control_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1824,7 +1936,7 @@ func (x *StateRestore) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StateRestore.ProtoReflect.Descriptor instead.
 func (*StateRestore) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{16}
+	return file_api_control_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *StateRestore) GetInstanceId() string {
@@ -1859,7 +1971,7 @@ type UpdateRequest struct {
 
 func (x *UpdateRequest) Reset() {
 	*x = UpdateRequest{}
-	mi := &file_api_control_proto_msgTypes[17]
+	mi := &file_api_control_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1871,7 +1983,7 @@ func (x *UpdateRequest) String() string {
 func (*UpdateRequest) ProtoMessage() {}
 
 func (x *UpdateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[17]
+	mi := &file_api_control_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1884,7 +1996,7 @@ func (x *UpdateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateRequest.ProtoReflect.Descriptor instead.
 func (*UpdateRequest) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{17}
+	return file_api_control_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *UpdateRequest) GetGeneration() int64 {
@@ -1920,7 +2032,7 @@ type UpdateStatus struct {
 
 func (x *UpdateStatus) Reset() {
 	*x = UpdateStatus{}
-	mi := &file_api_control_proto_msgTypes[18]
+	mi := &file_api_control_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1932,7 +2044,7 @@ func (x *UpdateStatus) String() string {
 func (*UpdateStatus) ProtoMessage() {}
 
 func (x *UpdateStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[18]
+	mi := &file_api_control_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1945,7 +2057,7 @@ func (x *UpdateStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateStatus.ProtoReflect.Descriptor instead.
 func (*UpdateStatus) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{18}
+	return file_api_control_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *UpdateStatus) GetGeneration() int64 {
@@ -2017,7 +2129,7 @@ type NodeConfig struct {
 
 func (x *NodeConfig) Reset() {
 	*x = NodeConfig{}
-	mi := &file_api_control_proto_msgTypes[19]
+	mi := &file_api_control_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2029,7 +2141,7 @@ func (x *NodeConfig) String() string {
 func (*NodeConfig) ProtoMessage() {}
 
 func (x *NodeConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[19]
+	mi := &file_api_control_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2042,7 +2154,7 @@ func (x *NodeConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeConfig.ProtoReflect.Descriptor instead.
 func (*NodeConfig) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{19}
+	return file_api_control_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *NodeConfig) GetEnabled() bool {
@@ -2299,7 +2411,7 @@ type IPRecoveryConfig struct {
 
 func (x *IPRecoveryConfig) Reset() {
 	*x = IPRecoveryConfig{}
-	mi := &file_api_control_proto_msgTypes[20]
+	mi := &file_api_control_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2311,7 +2423,7 @@ func (x *IPRecoveryConfig) String() string {
 func (*IPRecoveryConfig) ProtoMessage() {}
 
 func (x *IPRecoveryConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[20]
+	mi := &file_api_control_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2324,7 +2436,7 @@ func (x *IPRecoveryConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IPRecoveryConfig.ProtoReflect.Descriptor instead.
 func (*IPRecoveryConfig) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{20}
+	return file_api_control_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *IPRecoveryConfig) GetEnabled() bool {
@@ -2454,7 +2566,7 @@ type IPRecoveryStatus struct {
 
 func (x *IPRecoveryStatus) Reset() {
 	*x = IPRecoveryStatus{}
-	mi := &file_api_control_proto_msgTypes[21]
+	mi := &file_api_control_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2466,7 +2578,7 @@ func (x *IPRecoveryStatus) String() string {
 func (*IPRecoveryStatus) ProtoMessage() {}
 
 func (x *IPRecoveryStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[21]
+	mi := &file_api_control_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2479,7 +2591,7 @@ func (x *IPRecoveryStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IPRecoveryStatus.ProtoReflect.Descriptor instead.
 func (*IPRecoveryStatus) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{21}
+	return file_api_control_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *IPRecoveryStatus) GetGeneration() int64 {
@@ -2602,7 +2714,7 @@ type DDNSConfig struct {
 
 func (x *DDNSConfig) Reset() {
 	*x = DDNSConfig{}
-	mi := &file_api_control_proto_msgTypes[22]
+	mi := &file_api_control_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2614,7 +2726,7 @@ func (x *DDNSConfig) String() string {
 func (*DDNSConfig) ProtoMessage() {}
 
 func (x *DDNSConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[22]
+	mi := &file_api_control_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2627,7 +2739,7 @@ func (x *DDNSConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DDNSConfig.ProtoReflect.Descriptor instead.
 func (*DDNSConfig) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{22}
+	return file_api_control_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *DDNSConfig) GetEnabled() bool {
@@ -2745,7 +2857,7 @@ type DDNSStatus struct {
 
 func (x *DDNSStatus) Reset() {
 	*x = DDNSStatus{}
-	mi := &file_api_control_proto_msgTypes[23]
+	mi := &file_api_control_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2757,7 +2869,7 @@ func (x *DDNSStatus) String() string {
 func (*DDNSStatus) ProtoMessage() {}
 
 func (x *DDNSStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[23]
+	mi := &file_api_control_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2770,7 +2882,7 @@ func (x *DDNSStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DDNSStatus.ProtoReflect.Descriptor instead.
 func (*DDNSStatus) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{23}
+	return file_api_control_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *DDNSStatus) GetGeneration() int64 {
@@ -2846,7 +2958,7 @@ type RandomConfig struct {
 
 func (x *RandomConfig) Reset() {
 	*x = RandomConfig{}
-	mi := &file_api_control_proto_msgTypes[24]
+	mi := &file_api_control_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2858,7 +2970,7 @@ func (x *RandomConfig) String() string {
 func (*RandomConfig) ProtoMessage() {}
 
 func (x *RandomConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[24]
+	mi := &file_api_control_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2871,7 +2983,7 @@ func (x *RandomConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RandomConfig.ProtoReflect.Descriptor instead.
 func (*RandomConfig) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{24}
+	return file_api_control_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *RandomConfig) GetCipher() string {
@@ -2900,7 +3012,7 @@ type QUICPaddingConfig struct {
 
 func (x *QUICPaddingConfig) Reset() {
 	*x = QUICPaddingConfig{}
-	mi := &file_api_control_proto_msgTypes[25]
+	mi := &file_api_control_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2912,7 +3024,7 @@ func (x *QUICPaddingConfig) String() string {
 func (*QUICPaddingConfig) ProtoMessage() {}
 
 func (x *QUICPaddingConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[25]
+	mi := &file_api_control_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2925,7 +3037,7 @@ func (x *QUICPaddingConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QUICPaddingConfig.ProtoReflect.Descriptor instead.
 func (*QUICPaddingConfig) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{25}
+	return file_api_control_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *QUICPaddingConfig) GetEnabled() bool {
@@ -2978,7 +3090,7 @@ type TLSClientConfig struct {
 
 func (x *TLSClientConfig) Reset() {
 	*x = TLSClientConfig{}
-	mi := &file_api_control_proto_msgTypes[26]
+	mi := &file_api_control_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2990,7 +3102,7 @@ func (x *TLSClientConfig) String() string {
 func (*TLSClientConfig) ProtoMessage() {}
 
 func (x *TLSClientConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[26]
+	mi := &file_api_control_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3003,7 +3115,7 @@ func (x *TLSClientConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TLSClientConfig.ProtoReflect.Descriptor instead.
 func (*TLSClientConfig) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{26}
+	return file_api_control_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *TLSClientConfig) GetServerName() string {
@@ -3129,7 +3241,7 @@ type TLSServerConfig struct {
 
 func (x *TLSServerConfig) Reset() {
 	*x = TLSServerConfig{}
-	mi := &file_api_control_proto_msgTypes[27]
+	mi := &file_api_control_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3141,7 +3253,7 @@ func (x *TLSServerConfig) String() string {
 func (*TLSServerConfig) ProtoMessage() {}
 
 func (x *TLSServerConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[27]
+	mi := &file_api_control_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3154,7 +3266,7 @@ func (x *TLSServerConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TLSServerConfig.ProtoReflect.Descriptor instead.
 func (*TLSServerConfig) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{27}
+	return file_api_control_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *TLSServerConfig) GetServerName() string {
@@ -3289,7 +3401,7 @@ type ACMEChallenge struct {
 
 func (x *ACMEChallenge) Reset() {
 	*x = ACMEChallenge{}
-	mi := &file_api_control_proto_msgTypes[28]
+	mi := &file_api_control_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3301,7 +3413,7 @@ func (x *ACMEChallenge) String() string {
 func (*ACMEChallenge) ProtoMessage() {}
 
 func (x *ACMEChallenge) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[28]
+	mi := &file_api_control_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3314,7 +3426,7 @@ func (x *ACMEChallenge) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ACMEChallenge.ProtoReflect.Descriptor instead.
 func (*ACMEChallenge) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{28}
+	return file_api_control_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *ACMEChallenge) GetDomain() string {
@@ -3388,7 +3500,7 @@ type Probe struct {
 
 func (x *Probe) Reset() {
 	*x = Probe{}
-	mi := &file_api_control_proto_msgTypes[29]
+	mi := &file_api_control_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3400,7 +3512,7 @@ func (x *Probe) String() string {
 func (*Probe) ProtoMessage() {}
 
 func (x *Probe) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[29]
+	mi := &file_api_control_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3413,7 +3525,7 @@ func (x *Probe) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Probe.ProtoReflect.Descriptor instead.
 func (*Probe) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{29}
+	return file_api_control_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *Probe) GetSampledAt() int64 {
@@ -3623,7 +3735,7 @@ type InterfaceTraffic struct {
 
 func (x *InterfaceTraffic) Reset() {
 	*x = InterfaceTraffic{}
-	mi := &file_api_control_proto_msgTypes[30]
+	mi := &file_api_control_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3635,7 +3747,7 @@ func (x *InterfaceTraffic) String() string {
 func (*InterfaceTraffic) ProtoMessage() {}
 
 func (x *InterfaceTraffic) ProtoReflect() protoreflect.Message {
-	mi := &file_api_control_proto_msgTypes[30]
+	mi := &file_api_control_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3648,7 +3760,7 @@ func (x *InterfaceTraffic) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InterfaceTraffic.ProtoReflect.Descriptor instead.
 func (*InterfaceTraffic) Descriptor() ([]byte, []int) {
-	return file_api_control_proto_rawDescGZIP(), []int{30}
+	return file_api_control_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *InterfaceTraffic) GetName() string {
@@ -3676,7 +3788,13 @@ var File_api_control_proto protoreflect.FileDescriptor
 
 const file_api_control_proto_rawDesc = "" +
 	"\n" +
-	"\x11api/control.proto\x12\vnekopass.v1\"\x84\x02\n" +
+	"\x11api/control.proto\x12\vnekopass.v1\"^\n" +
+	"\x0fUninstallReport\x12\x16\n" +
+	"\x06ticket\x18\x01 \x01(\tR\x06ticket\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\x12\x1d\n" +
+	"\n" +
+	"check_only\x18\x03 \x01(\bR\tcheckOnly\"\x13\n" +
+	"\x11UninstallResponse\"\x84\x02\n" +
 	"\x05Usage\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x14\n" +
 	"\x05spent\x18\x02 \x01(\x03R\x05spent\x12\x1a\n" +
@@ -3689,7 +3807,7 @@ const file_api_control_proto_rawDesc = "" +
 	"\rcharged_bytes\x18\b \x01(\x03R\fchargedBytes\">\n" +
 	"\tRuleUsage\x12\x17\n" +
 	"\arule_id\x18\x01 \x01(\x03R\x06ruleId\x12\x18\n" +
-	"\atraffic\x18\x02 \x01(\x03R\atraffic\"\xd0\x06\n" +
+	"\atraffic\x18\x02 \x01(\x03R\atraffic\"\x81\a\n" +
 	"\fAgentMessage\x12(\n" +
 	"\x05usage\x18\x01 \x03(\v2\x12.nekopass.v1.UsageR\x05usage\x125\n" +
 	"\n" +
@@ -3712,7 +3830,8 @@ const file_api_control_proto_rawDesc = "" +
 	"\rrestore_state\x18\x0f \x01(\bR\frestoreState\x128\n" +
 	"\tpublic_ip\x18\x10 \x01(\v2\x1b.nekopass.v1.PublicIPStatusR\bpublicIp\x12K\n" +
 	"\x12ip_recovery_status\x18\x11 \x01(\v2\x1d.nekopass.v1.IPRecoveryStatusR\x10ipRecoveryStatus\x12C\n" +
-	"\x1eupdate_download_base_supported\x18\x12 \x01(\bR\x1bupdateDownloadBaseSupported\"[\n" +
+	"\x1eupdate_download_base_supported\x18\x12 \x01(\bR\x1bupdateDownloadBaseSupported\x12/\n" +
+	"\x13uninstall_supported\x18\x13 \x01(\bR\x12uninstallSupported\"[\n" +
 	"\x0ePublicIPStatus\x12\x12\n" +
 	"\x04ipv4\x18\x01 \x01(\tR\x04ipv4\x12\x12\n" +
 	"\x04ipv6\x18\x02 \x01(\tR\x04ipv6\x12!\n" +
@@ -3856,7 +3975,7 @@ const file_api_control_proto_rawDesc = "" +
 	"\vquota_epoch\x18\x05 \x01(\x03R\n" +
 	"quotaEpoch\x12!\n" +
 	"\fexpires_unix\x18\x06 \x01(\x03R\vexpiresUnix\x12\x1a\n" +
-	"\bprotocol\x18\a \x01(\tR\bprotocol\"\x8b\x04\n" +
+	"\bprotocol\x18\a \x01(\tR\bprotocol\"\xb6\x04\n" +
 	"\x0eControlMessage\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\x03R\brevision\x12-\n" +
 	"\x05users\x18\x02 \x03(\v2\x17.nekopass.v1.UserPolicyR\x05users\x12'\n" +
@@ -3868,7 +3987,8 @@ const file_api_control_proto_rawDesc = "" +
 	"\x06update\x18\b \x01(\v2\x1a.nekopass.v1.UpdateRequestR\x06update\x12)\n" +
 	"\x10control_endpoint\x18\t \x01(\tR\x0fcontrolEndpoint\x12>\n" +
 	"\rstate_restore\x18\n" +
-	" \x01(\v2\x19.nekopass.v1.StateRestoreR\fstateRestore\"\xb0\x02\n" +
+	" \x01(\v2\x19.nekopass.v1.StateRestoreR\fstateRestore\x12)\n" +
+	"\x10uninstall_ticket\x18\v \x01(\tR\x0funinstallTicket\"\xb0\x02\n" +
 	"\x11UserStateBaseline\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x1f\n" +
 	"\vquota_epoch\x18\x02 \x01(\x03R\n" +
@@ -4115,9 +4235,10 @@ const file_api_control_proto_rawDesc = "" +
 	"\x10InterfaceTraffic\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x19\n" +
 	"\brx_bytes\x18\x02 \x01(\x03R\arxBytes\x12\x19\n" +
-	"\btx_bytes\x18\x03 \x01(\x03R\atxBytes2P\n" +
+	"\btx_bytes\x18\x03 \x01(\x03R\atxBytes2\xa1\x01\n" +
 	"\aControl\x12E\n" +
-	"\aConnect\x12\x19.nekopass.v1.AgentMessage\x1a\x1b.nekopass.v1.ControlMessage(\x010\x01B0Z.github.com/nekopass/nekopass/internal/protocolb\x06proto3"
+	"\aConnect\x12\x19.nekopass.v1.AgentMessage\x1a\x1b.nekopass.v1.ControlMessage(\x010\x01\x12O\n" +
+	"\x0fReportUninstall\x12\x1c.nekopass.v1.UninstallReport\x1a\x1e.nekopass.v1.UninstallResponseB0Z.github.com/nekopass/nekopass/internal/protocolb\x06proto3"
 
 var (
 	file_api_control_proto_rawDescOnce sync.Once
@@ -4131,85 +4252,89 @@ func file_api_control_proto_rawDescGZIP() []byte {
 	return file_api_control_proto_rawDescData
 }
 
-var file_api_control_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
+var file_api_control_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
 var file_api_control_proto_goTypes = []any{
-	(*Usage)(nil),             // 0: nekopass.v1.Usage
-	(*RuleUsage)(nil),         // 1: nekopass.v1.RuleUsage
-	(*AgentMessage)(nil),      // 2: nekopass.v1.AgentMessage
-	(*PublicIPStatus)(nil),    // 3: nekopass.v1.PublicIPStatus
-	(*UserPolicy)(nil),        // 4: nekopass.v1.UserPolicy
-	(*Rule)(nil),              // 5: nekopass.v1.Rule
-	(*EgressPeer)(nil),        // 6: nekopass.v1.EgressPeer
-	(*OriginTLSConfig)(nil),   // 7: nekopass.v1.OriginTLSConfig
-	(*SharedTLSInbound)(nil),  // 8: nekopass.v1.SharedTLSInbound
-	(*ACMEHTTPEndpoint)(nil),  // 9: nekopass.v1.ACMEHTTPEndpoint
-	(*TunnelLink)(nil),        // 10: nekopass.v1.TunnelLink
-	(*TunnelCongestion)(nil),  // 11: nekopass.v1.TunnelCongestion
-	(*MuxConfig)(nil),         // 12: nekopass.v1.MuxConfig
-	(*EgressRule)(nil),        // 13: nekopass.v1.EgressRule
-	(*ControlMessage)(nil),    // 14: nekopass.v1.ControlMessage
-	(*UserStateBaseline)(nil), // 15: nekopass.v1.UserStateBaseline
-	(*StateRestore)(nil),      // 16: nekopass.v1.StateRestore
-	(*UpdateRequest)(nil),     // 17: nekopass.v1.UpdateRequest
-	(*UpdateStatus)(nil),      // 18: nekopass.v1.UpdateStatus
-	(*NodeConfig)(nil),        // 19: nekopass.v1.NodeConfig
-	(*IPRecoveryConfig)(nil),  // 20: nekopass.v1.IPRecoveryConfig
-	(*IPRecoveryStatus)(nil),  // 21: nekopass.v1.IPRecoveryStatus
-	(*DDNSConfig)(nil),        // 22: nekopass.v1.DDNSConfig
-	(*DDNSStatus)(nil),        // 23: nekopass.v1.DDNSStatus
-	(*RandomConfig)(nil),      // 24: nekopass.v1.RandomConfig
-	(*QUICPaddingConfig)(nil), // 25: nekopass.v1.QUICPaddingConfig
-	(*TLSClientConfig)(nil),   // 26: nekopass.v1.TLSClientConfig
-	(*TLSServerConfig)(nil),   // 27: nekopass.v1.TLSServerConfig
-	(*ACMEChallenge)(nil),     // 28: nekopass.v1.ACMEChallenge
-	(*Probe)(nil),             // 29: nekopass.v1.Probe
-	(*InterfaceTraffic)(nil),  // 30: nekopass.v1.InterfaceTraffic
+	(*UninstallReport)(nil),   // 0: nekopass.v1.UninstallReport
+	(*UninstallResponse)(nil), // 1: nekopass.v1.UninstallResponse
+	(*Usage)(nil),             // 2: nekopass.v1.Usage
+	(*RuleUsage)(nil),         // 3: nekopass.v1.RuleUsage
+	(*AgentMessage)(nil),      // 4: nekopass.v1.AgentMessage
+	(*PublicIPStatus)(nil),    // 5: nekopass.v1.PublicIPStatus
+	(*UserPolicy)(nil),        // 6: nekopass.v1.UserPolicy
+	(*Rule)(nil),              // 7: nekopass.v1.Rule
+	(*EgressPeer)(nil),        // 8: nekopass.v1.EgressPeer
+	(*OriginTLSConfig)(nil),   // 9: nekopass.v1.OriginTLSConfig
+	(*SharedTLSInbound)(nil),  // 10: nekopass.v1.SharedTLSInbound
+	(*ACMEHTTPEndpoint)(nil),  // 11: nekopass.v1.ACMEHTTPEndpoint
+	(*TunnelLink)(nil),        // 12: nekopass.v1.TunnelLink
+	(*TunnelCongestion)(nil),  // 13: nekopass.v1.TunnelCongestion
+	(*MuxConfig)(nil),         // 14: nekopass.v1.MuxConfig
+	(*EgressRule)(nil),        // 15: nekopass.v1.EgressRule
+	(*ControlMessage)(nil),    // 16: nekopass.v1.ControlMessage
+	(*UserStateBaseline)(nil), // 17: nekopass.v1.UserStateBaseline
+	(*StateRestore)(nil),      // 18: nekopass.v1.StateRestore
+	(*UpdateRequest)(nil),     // 19: nekopass.v1.UpdateRequest
+	(*UpdateStatus)(nil),      // 20: nekopass.v1.UpdateStatus
+	(*NodeConfig)(nil),        // 21: nekopass.v1.NodeConfig
+	(*IPRecoveryConfig)(nil),  // 22: nekopass.v1.IPRecoveryConfig
+	(*IPRecoveryStatus)(nil),  // 23: nekopass.v1.IPRecoveryStatus
+	(*DDNSConfig)(nil),        // 24: nekopass.v1.DDNSConfig
+	(*DDNSStatus)(nil),        // 25: nekopass.v1.DDNSStatus
+	(*RandomConfig)(nil),      // 26: nekopass.v1.RandomConfig
+	(*QUICPaddingConfig)(nil), // 27: nekopass.v1.QUICPaddingConfig
+	(*TLSClientConfig)(nil),   // 28: nekopass.v1.TLSClientConfig
+	(*TLSServerConfig)(nil),   // 29: nekopass.v1.TLSServerConfig
+	(*ACMEChallenge)(nil),     // 30: nekopass.v1.ACMEChallenge
+	(*Probe)(nil),             // 31: nekopass.v1.Probe
+	(*InterfaceTraffic)(nil),  // 32: nekopass.v1.InterfaceTraffic
 }
 var file_api_control_proto_depIdxs = []int32{
-	0,  // 0: nekopass.v1.AgentMessage.usage:type_name -> nekopass.v1.Usage
-	1,  // 1: nekopass.v1.AgentMessage.rule_usage:type_name -> nekopass.v1.RuleUsage
-	29, // 2: nekopass.v1.AgentMessage.probe:type_name -> nekopass.v1.Probe
-	23, // 3: nekopass.v1.AgentMessage.ddns_status:type_name -> nekopass.v1.DDNSStatus
-	18, // 4: nekopass.v1.AgentMessage.update_status:type_name -> nekopass.v1.UpdateStatus
-	3,  // 5: nekopass.v1.AgentMessage.public_ip:type_name -> nekopass.v1.PublicIPStatus
-	21, // 6: nekopass.v1.AgentMessage.ip_recovery_status:type_name -> nekopass.v1.IPRecoveryStatus
-	26, // 7: nekopass.v1.Rule.tls:type_name -> nekopass.v1.TLSClientConfig
-	7,  // 8: nekopass.v1.Rule.origin_tls:type_name -> nekopass.v1.OriginTLSConfig
-	6,  // 9: nekopass.v1.Rule.egress_peers:type_name -> nekopass.v1.EgressPeer
-	24, // 10: nekopass.v1.Rule.random:type_name -> nekopass.v1.RandomConfig
-	11, // 11: nekopass.v1.Rule.congestion:type_name -> nekopass.v1.TunnelCongestion
-	12, // 12: nekopass.v1.Rule.mux:type_name -> nekopass.v1.MuxConfig
-	26, // 13: nekopass.v1.EgressPeer.tls:type_name -> nekopass.v1.TLSClientConfig
-	24, // 14: nekopass.v1.EgressPeer.random:type_name -> nekopass.v1.RandomConfig
-	11, // 15: nekopass.v1.EgressPeer.congestion:type_name -> nekopass.v1.TunnelCongestion
-	12, // 16: nekopass.v1.EgressPeer.mux:type_name -> nekopass.v1.MuxConfig
-	28, // 17: nekopass.v1.ACMEHTTPEndpoint.challenges:type_name -> nekopass.v1.ACMEChallenge
-	11, // 18: nekopass.v1.TunnelLink.congestion:type_name -> nekopass.v1.TunnelCongestion
-	4,  // 19: nekopass.v1.ControlMessage.users:type_name -> nekopass.v1.UserPolicy
-	5,  // 20: nekopass.v1.ControlMessage.rules:type_name -> nekopass.v1.Rule
-	19, // 21: nekopass.v1.ControlMessage.node:type_name -> nekopass.v1.NodeConfig
-	0,  // 22: nekopass.v1.ControlMessage.acknowledged_usage:type_name -> nekopass.v1.Usage
-	10, // 23: nekopass.v1.ControlMessage.tunnel_links:type_name -> nekopass.v1.TunnelLink
-	13, // 24: nekopass.v1.ControlMessage.egress_rules:type_name -> nekopass.v1.EgressRule
-	17, // 25: nekopass.v1.ControlMessage.update:type_name -> nekopass.v1.UpdateRequest
-	16, // 26: nekopass.v1.ControlMessage.state_restore:type_name -> nekopass.v1.StateRestore
-	15, // 27: nekopass.v1.StateRestore.users:type_name -> nekopass.v1.UserStateBaseline
-	1,  // 28: nekopass.v1.StateRestore.rules:type_name -> nekopass.v1.RuleUsage
-	27, // 29: nekopass.v1.NodeConfig.tls:type_name -> nekopass.v1.TLSServerConfig
-	22, // 30: nekopass.v1.NodeConfig.ddns:type_name -> nekopass.v1.DDNSConfig
-	20, // 31: nekopass.v1.NodeConfig.ip_recovery:type_name -> nekopass.v1.IPRecoveryConfig
-	8,  // 32: nekopass.v1.NodeConfig.tls_inbounds:type_name -> nekopass.v1.SharedTLSInbound
-	9,  // 33: nekopass.v1.NodeConfig.acme_http:type_name -> nekopass.v1.ACMEHTTPEndpoint
-	24, // 34: nekopass.v1.NodeConfig.random:type_name -> nekopass.v1.RandomConfig
-	12, // 35: nekopass.v1.NodeConfig.mux:type_name -> nekopass.v1.MuxConfig
-	25, // 36: nekopass.v1.TLSClientConfig.quic_padding:type_name -> nekopass.v1.QUICPaddingConfig
-	28, // 37: nekopass.v1.TLSServerConfig.challenges:type_name -> nekopass.v1.ACMEChallenge
-	25, // 38: nekopass.v1.TLSServerConfig.quic_padding:type_name -> nekopass.v1.QUICPaddingConfig
-	30, // 39: nekopass.v1.Probe.network_counters:type_name -> nekopass.v1.InterfaceTraffic
-	2,  // 40: nekopass.v1.Control.Connect:input_type -> nekopass.v1.AgentMessage
-	14, // 41: nekopass.v1.Control.Connect:output_type -> nekopass.v1.ControlMessage
-	41, // [41:42] is the sub-list for method output_type
-	40, // [40:41] is the sub-list for method input_type
+	2,  // 0: nekopass.v1.AgentMessage.usage:type_name -> nekopass.v1.Usage
+	3,  // 1: nekopass.v1.AgentMessage.rule_usage:type_name -> nekopass.v1.RuleUsage
+	31, // 2: nekopass.v1.AgentMessage.probe:type_name -> nekopass.v1.Probe
+	25, // 3: nekopass.v1.AgentMessage.ddns_status:type_name -> nekopass.v1.DDNSStatus
+	20, // 4: nekopass.v1.AgentMessage.update_status:type_name -> nekopass.v1.UpdateStatus
+	5,  // 5: nekopass.v1.AgentMessage.public_ip:type_name -> nekopass.v1.PublicIPStatus
+	23, // 6: nekopass.v1.AgentMessage.ip_recovery_status:type_name -> nekopass.v1.IPRecoveryStatus
+	28, // 7: nekopass.v1.Rule.tls:type_name -> nekopass.v1.TLSClientConfig
+	9,  // 8: nekopass.v1.Rule.origin_tls:type_name -> nekopass.v1.OriginTLSConfig
+	8,  // 9: nekopass.v1.Rule.egress_peers:type_name -> nekopass.v1.EgressPeer
+	26, // 10: nekopass.v1.Rule.random:type_name -> nekopass.v1.RandomConfig
+	13, // 11: nekopass.v1.Rule.congestion:type_name -> nekopass.v1.TunnelCongestion
+	14, // 12: nekopass.v1.Rule.mux:type_name -> nekopass.v1.MuxConfig
+	28, // 13: nekopass.v1.EgressPeer.tls:type_name -> nekopass.v1.TLSClientConfig
+	26, // 14: nekopass.v1.EgressPeer.random:type_name -> nekopass.v1.RandomConfig
+	13, // 15: nekopass.v1.EgressPeer.congestion:type_name -> nekopass.v1.TunnelCongestion
+	14, // 16: nekopass.v1.EgressPeer.mux:type_name -> nekopass.v1.MuxConfig
+	30, // 17: nekopass.v1.ACMEHTTPEndpoint.challenges:type_name -> nekopass.v1.ACMEChallenge
+	13, // 18: nekopass.v1.TunnelLink.congestion:type_name -> nekopass.v1.TunnelCongestion
+	6,  // 19: nekopass.v1.ControlMessage.users:type_name -> nekopass.v1.UserPolicy
+	7,  // 20: nekopass.v1.ControlMessage.rules:type_name -> nekopass.v1.Rule
+	21, // 21: nekopass.v1.ControlMessage.node:type_name -> nekopass.v1.NodeConfig
+	2,  // 22: nekopass.v1.ControlMessage.acknowledged_usage:type_name -> nekopass.v1.Usage
+	12, // 23: nekopass.v1.ControlMessage.tunnel_links:type_name -> nekopass.v1.TunnelLink
+	15, // 24: nekopass.v1.ControlMessage.egress_rules:type_name -> nekopass.v1.EgressRule
+	19, // 25: nekopass.v1.ControlMessage.update:type_name -> nekopass.v1.UpdateRequest
+	18, // 26: nekopass.v1.ControlMessage.state_restore:type_name -> nekopass.v1.StateRestore
+	17, // 27: nekopass.v1.StateRestore.users:type_name -> nekopass.v1.UserStateBaseline
+	3,  // 28: nekopass.v1.StateRestore.rules:type_name -> nekopass.v1.RuleUsage
+	29, // 29: nekopass.v1.NodeConfig.tls:type_name -> nekopass.v1.TLSServerConfig
+	24, // 30: nekopass.v1.NodeConfig.ddns:type_name -> nekopass.v1.DDNSConfig
+	22, // 31: nekopass.v1.NodeConfig.ip_recovery:type_name -> nekopass.v1.IPRecoveryConfig
+	10, // 32: nekopass.v1.NodeConfig.tls_inbounds:type_name -> nekopass.v1.SharedTLSInbound
+	11, // 33: nekopass.v1.NodeConfig.acme_http:type_name -> nekopass.v1.ACMEHTTPEndpoint
+	26, // 34: nekopass.v1.NodeConfig.random:type_name -> nekopass.v1.RandomConfig
+	14, // 35: nekopass.v1.NodeConfig.mux:type_name -> nekopass.v1.MuxConfig
+	27, // 36: nekopass.v1.TLSClientConfig.quic_padding:type_name -> nekopass.v1.QUICPaddingConfig
+	30, // 37: nekopass.v1.TLSServerConfig.challenges:type_name -> nekopass.v1.ACMEChallenge
+	27, // 38: nekopass.v1.TLSServerConfig.quic_padding:type_name -> nekopass.v1.QUICPaddingConfig
+	32, // 39: nekopass.v1.Probe.network_counters:type_name -> nekopass.v1.InterfaceTraffic
+	4,  // 40: nekopass.v1.Control.Connect:input_type -> nekopass.v1.AgentMessage
+	0,  // 41: nekopass.v1.Control.ReportUninstall:input_type -> nekopass.v1.UninstallReport
+	16, // 42: nekopass.v1.Control.Connect:output_type -> nekopass.v1.ControlMessage
+	1,  // 43: nekopass.v1.Control.ReportUninstall:output_type -> nekopass.v1.UninstallResponse
+	42, // [42:44] is the sub-list for method output_type
+	40, // [40:42] is the sub-list for method input_type
 	40, // [40:40] is the sub-list for extension type_name
 	40, // [40:40] is the sub-list for extension extendee
 	0,  // [0:40] is the sub-list for field type_name
@@ -4226,7 +4351,7 @@ func file_api_control_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_control_proto_rawDesc), len(file_api_control_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   31,
+			NumMessages:   33,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

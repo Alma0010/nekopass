@@ -43,7 +43,10 @@ jobs:
           python3 -m unittest discover -s tests -p installer_prompt_test.py
           python3 -m unittest discover -s tests -p installer_url_test.py
           python3 -m unittest discover -s tests -p uninstaller_test.py
-          bash -n scripts/install-panel.sh scripts/install-agent.sh scripts/uninstall-agent.sh scripts/nekopassctl.sh
+          python3 -m unittest discover -s tests -p panel_uninstall_test.py
+          for script in scripts/install-panel.sh scripts/install-agent.sh scripts/uninstall-agent.sh scripts/nekopassctl.sh; do
+            bash -n "$script"
+          done
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version-file: go.mod
@@ -86,11 +89,13 @@ jobs:
       - name: Build native Linux amd64 and arm64 packages
         shell: pwsh
         run: ./scripts/package-panel.ps1 -Version $env:RELEASE_TAG
-      - name: Test fresh native panel installation
+      - name: Test native panel installation and Agent uninstall
         run: |
           sudo python3 tests/panel_fresh_install_e2e.py \
             --installer dist/oss/nekopass/install-panel.sh \
-            --package "dist/oss/nekopass/releases/$RELEASE_TAG/nekopass-panel-linux-amd64.tar.gz"
+            --package "dist/oss/nekopass/releases/$RELEASE_TAG/nekopass-panel-linux-amd64.tar.gz" \
+            --agent-installer dist/oss/nekopass/install-agent.sh \
+            --agent-binary "dist/oss/nekopass/releases/$RELEASE_TAG/nekopass-agent-linux-amd64"
       - name: Create draft, upload assets and publish
         env:
           GH_TOKEN: ${{ github.token }}

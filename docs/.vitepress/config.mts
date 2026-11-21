@@ -18,29 +18,58 @@ export default defineConfig({
   themeConfig: {
     logo: '/logo-mark.svg',
     nav: [
-      { text: '使用文档', link: '/guide/panel' },
+      { text: '开始使用', link: '/guide/panel' },
       { text: '使用示例', link: '/examples/' },
-      { text: '传输协议', link: '/protocols/' },
-      { text: '安全性', link: '/security/' },
+      { text: '面板维护', link: '/guide/manage' },
       ...(repository ? [{ text: '源码', link: `https://github.com/${repository}` }] : [])
     ],
     sidebar: [
       {
-        text: '安装与接入',
+        text: '开始使用',
         items: [
           { text: '安装面板', link: '/guide/panel' },
-          { text: '安装节点', link: '/guide/node' }
-        ]
-      },
-      {
-        text: '使用示例',
-        items: [
-          { text: '示例目录', link: '/examples/' },
+          { text: '安装节点', link: '/guide/node' },
+          { text: '转发规则', link: '/guide/rules' },
+          { text: '使用示例', link: '/examples/' },
           { text: 'Shadowsocks TCP / UDP', link: '/examples/shadowsocks' }
         ]
       },
       {
+        text: '面板维护',
+        items: [
+          { text: '升级、卸载与日常管理', link: '/guide/manage' },
+          { text: 'HTTPS 与反向代理', link: '/guide/proxy' },
+          { text: '常见问题', link: '/guide/troubleshooting' }
+        ]
+      },
+      {
+        text: '节点与线路',
+        items: [
+          { text: '节点与节点组 / DDNS', link: '/guide/nodes' },
+          { text: '节点中转', link: '/guide/tunnel' },
+          { text: 'TLS 入站 / SNI 分流', link: '/security/tls-inbound' },
+          { text: '转发安全', link: '/guide/security' },
+          { text: '自动换 IP', link: '/guide/ip-recovery' }
+        ]
+      },
+      {
+        text: '站点与用户',
+        collapsed: true,
+        items: [
+          { text: '功能开关', link: '/guide/manage#功能开关' },
+          { text: '用户与套餐', link: '/guide/users' },
+          { text: '注册与邀请', link: '/guide/account' },
+          { text: '商城与余额', link: '/guide/shop' },
+          { text: '支付方式', link: '/guide/payments' },
+          { text: '订单查询', link: '/guide/orders' },
+          { text: '工单', link: '/guide/tickets' },
+          { text: '站点公告', link: '/guide/announcements' },
+          { text: 'Telegram Bot', link: '/guide/telegram' }
+        ]
+      },
+      {
         text: '传输协议',
+        collapsed: true,
         items: [
           { text: '协议选择', link: '/protocols/' },
           { text: 'TCP 直转', link: '/protocols/tcp' },
@@ -52,40 +81,20 @@ export default defineConfig({
         ]
       },
       {
-        text: '安全性',
+        text: '隧道加密',
+        collapsed: true,
         items: [
           { text: '安全性选择', link: '/security/' },
           { text: '不加密', link: '/security/none' },
           { text: 'TLS', link: '/security/tls' },
-          { text: '全随机加密', link: '/security/random' },
-          { text: 'TLS 入站 / SNI 分流', link: '/security/tls-inbound' }
+          { text: '全随机加密', link: '/security/random' }
         ]
       },
       {
-        text: '用户功能',
+        text: '项目维护',
+        collapsed: true,
         items: [
-          { text: '注册与邀请', link: '/guide/account' },
-          { text: '商城与余额', link: '/guide/shop' },
-          { text: '转发规则', link: '/guide/rules' },
-          { text: '工单', link: '/guide/tickets' },
-          { text: '订单查询', link: '/guide/orders' },
-          { text: '站点公告', link: '/guide/announcements' }
-        ]
-      },
-      {
-        text: '管理员与部署',
-        items: [
-          { text: '用户与套餐', link: '/guide/users' },
-          { text: '节点与节点组 / DDNS', link: '/guide/nodes' },
-          { text: '自动换 IP', link: '/guide/ip-recovery' },
-          { text: '节点中转', link: '/guide/tunnel' },
-          { text: '支付方式', link: '/guide/payments' },
-          { text: 'Telegram Bot', link: '/guide/telegram' },
-          { text: '转发安全', link: '/guide/security' },
-          { text: '日常管理', link: '/guide/manage' },
-          { text: '发布与文档部署', link: '/guide/publishing' },
-          { text: '反向代理', link: '/guide/proxy' },
-          { text: '常见问题', link: '/guide/troubleshooting' }
+          { text: '发布与文档部署', link: '/guide/publishing' }
         ]
       }
     ],

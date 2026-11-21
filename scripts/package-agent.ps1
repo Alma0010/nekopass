@@ -1,4 +1,4 @@
-param([string]$Version = 'v0.20.4')
+param([string]$Version = 'v0.20.5')
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' -or $Version.Contains('..')) { throw 'Invalid version' }
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -14,10 +14,11 @@ $managerText = [IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/nekopassctl.
 $managerPayload = "write_manager_payload() {`ncat <<'NEKOPASS_MANAGER_PAYLOAD'`n" + $managerText.TrimEnd() + "`nNEKOPASS_MANAGER_PAYLOAD`n}`n"
 $updaterText = [IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/nekopass-update.py')).Replace("`r`n", "`n")
 $updaterPayload = "write_updater_payload() {`ncat <<'NEKOPASS_UPDATER_PAYLOAD'`n" + $updaterText.TrimEnd() + "`nNEKOPASS_UPDATER_PAYLOAD`n}`n"
-$installerText = $installerText.Replace('# PACKAGED_MANAGER', $managerPayload).Replace('# PACKAGED_UPDATER', $updaterPayload).Replace('v0.20.4', $Version)
+$uninstallerText = [IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/uninstall-agent.sh')).Replace("`r`n", "`n")
+$uninstallerPayload = "write_uninstaller_payload() {`ncat <<'NEKOPASS_UNINSTALLER_PAYLOAD'`n" + $uninstallerText.TrimEnd() + "`nNEKOPASS_UNINSTALLER_PAYLOAD`n}`n"
+$installerText = $installerText.Replace('# PACKAGED_MANAGER', $managerPayload).Replace('# PACKAGED_UPDATER', $updaterPayload).Replace('# PACKAGED_UNINSTALLER', $uninstallerPayload).Replace('v0.20.5', $Version)
 [IO.File]::WriteAllText($installerPath, $installerText, $utf8)
 [IO.File]::WriteAllText((Join-Path $assetRoot 'nekopassctl.sh'), $managerText, $utf8)
-$uninstallerText = [IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/uninstall-agent.sh')).Replace("`r`n", "`n")
 [IO.File]::WriteAllText((Join-Path $assetRoot 'uninstall-agent.sh'), $uninstallerText, $utf8)
 [IO.File]::WriteAllText((Join-Path $assetRoot 'nekopass-update.py'), $updaterText, $utf8)
 $previousOS = $env:GOOS

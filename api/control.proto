@@ -2,7 +2,16 @@ syntax = "proto3";
 package nekopass.v1;
 option go_package = "github.com/nekopass/nekopass/internal/protocol";
 
-service Control { rpc Connect(stream AgentMessage) returns (stream ControlMessage); }
+service Control {
+  rpc Connect(stream AgentMessage) returns (stream ControlMessage);
+  rpc ReportUninstall(UninstallReport) returns (UninstallResponse);
+}
+message UninstallReport {
+  string ticket = 1;
+  string error = 2;
+  bool check_only = 3;
+}
+message UninstallResponse {}
 
 message Usage {
   int64 user_id = 1;
@@ -34,6 +43,7 @@ message AgentMessage {
  PublicIPStatus public_ip = 16;
  IPRecoveryStatus ip_recovery_status = 17;
  bool update_download_base_supported = 18;
+ bool uninstall_supported = 19;
 }
 message PublicIPStatus {
  string ipv4 = 1;
@@ -139,6 +149,7 @@ message ControlMessage {
   UpdateRequest update = 8;
   string control_endpoint = 9;
   StateRestore state_restore = 10;
+ string uninstall_ticket = 11;
 }
 
 message UserStateBaseline {

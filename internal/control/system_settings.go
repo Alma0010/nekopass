@@ -420,10 +420,14 @@ func (s *Server) nodeInstallCommand(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, e.Error())
 		return
 	}
-	var bound bool
+	var bound, uninstalling bool
 	var token string
-	if e = s.Pool.QueryRow(r.Context(), "SELECT instance_id<>'',token FROM nodes WHERE id=$1", id).Scan(&bound, &token); e != nil {
+	if e = s.Pool.QueryRow(r.Context(), "SELECT instance_id<>'',token,EXISTS(SELECT 1 FROM node_uninstalls WHERE node_id=$1 AND state='queued') FROM nodes WHERE id=$1", id).Scan(&bound, &token, &uninstalling); e != nil {
 		fail(w, 404, "节点不存在")
+		return
+	}
+	if uninstalling {
+		fail(w, 409, "节点已有卸载任务，暂时无法生成安装命令")
 		return
 	}
 	if !validNodeToken(token) {

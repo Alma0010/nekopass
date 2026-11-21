@@ -1,20 +1,10 @@
 # 安装面板
 
-支持 Debian / Ubuntu、amd64 / arm64，使用原生 systemd。
-
-## 本地安装包
-
-将 `install-panel.sh` 与对应架构的安装包放在同一目录：
-
-```bash
-sudo bash install-panel.sh --package ./nekopass-panel-linux-amd64.tar.gz
-```
-
-ARM64 使用 `nekopass-panel-linux-arm64.tar.gz`。
+准备一台使用 systemd 的 Debian 或 Ubuntu 服务器，支持 amd64 和 arm64。安装器可以沿用本机的 PostgreSQL，也可以新建集群。
 
 ## 网络安装
 
-从 GitHub Releases 下载：
+在面板服务器上运行以下命令，下载并启动安装器。
 
 ```bash
 wget https://github.com/Alma0010/nekopass/releases/latest/download/install-panel.sh -O install-panel.sh && sudo bash install-panel.sh
@@ -22,28 +12,38 @@ wget https://github.com/Alma0010/nekopass/releases/latest/download/install-panel
 
 ### 选择 PostgreSQL 集群
 
-安装器会列出本机 `pg_lsclusters` 可识别的 PostgreSQL 14 或以上集群，显示版本、名称、端口和状态。输入编号选择，直接回车优先沿用正在运行的集群。也可以选择新建集群，再选择软件源和数据库主版本。未检测到可用集群时会进入安装流程。
+安装器会列出本机 `pg_lsclusters` 能识别的 PostgreSQL 14 或以上集群，并显示版本、名称、端口及运行状态。输入编号沿用已有集群，直接回车优先选择正在运行的集群。需要单独建库集群时，选择新建，再选择软件源和主版本。找不到可用集群时，安装器会引导你新建。
 
-自动化安装可用 `--yes` 接受默认值，也可指定 `--postgres-version` 和 `--db-port` 选中对应集群。如果依赖已齐全，例如本机 PostgreSQL 16 使用端口 5432，可运行以下命令沿用它。
+例如，本机已有 PostgreSQL 16，端口是 5432，且安装依赖已齐全，可以直接指定该集群。
 
 ```bash
 sudo bash install-panel.sh --host panel.example.com --postgres-version 16 --db-port 5432 --skip-dependencies --yes
 ```
 
-### 安装完成
+### 登录后台
 
-安装器在所选集群中创建或复用面板数据库，并配置 systemd 服务。首次创建管理员时，安装摘要会显示一次管理员账号和随机生成的密码。复用已有面板数据库时会保留已有管理员及密码。
+首次安装完成后，记下终端显示的管理员账号和随机密码。打开 `http://服务器地址:8080` 登录。云服务器上记得在安全组放行所用端口。
+
+复用原面板数据库时，用原管理员账号和密码登录。忘记密码可以在服务器上[重置管理员密码](./manage.md#重置管理员密码)。
 
 | 默认入口 | 端口 |
 | --- | --- |
 | 网页 HTTP | `8080` |
 | 节点控制连接 | `9443` |
 
-打开 `http://服务器地址:8080`。云服务器还需放行安全组端口。
+默认使用 `plain` 模式，也就是明文 HTTP/2，适合测试。生产环境可选择 `existing` 使用已有的公共 CA 证书，或选择 `proxy` 由 Nginx 处理 TLS。网页 HTTPS 和节点控制连接的示例见 [HTTPS 与反向代理](./proxy.md)。
 
-节点连接可选 `plain`（测试明文 HTTP/2）、`existing`（已有公共 CA 证书）或 `proxy`（Nginx 终止 TLS）；默认 `plain`，不生成自签 CA。网页 HTTPS 使用 [反向代理](./proxy.md)。
+登录后先[安装节点](./node.md)，等节点上线后再[添加转发规则](./rules.md)。
 
-常用参数：
+## 本地安装包
+
+如果已下载安装文件，把 `install-panel.sh` 和对应架构的压缩包放在同一个目录，再运行下面的命令。arm64 服务器使用 `nekopass-panel-linux-arm64.tar.gz`。
+
+```bash
+sudo bash install-panel.sh --package ./nekopass-panel-linux-amd64.tar.gz
+```
+
+## 常用参数
 
 | 参数 | 用途 |
 | --- | --- |
@@ -54,22 +54,21 @@ sudo bash install-panel.sh --host panel.example.com --postgres-version 16 --db-p
 | `--postgres-version` / `--db-port` | 指定本机 PostgreSQL 主版本和端口，以沿用对应集群。 |
 | `--skip-dependencies` | 已满足依赖时跳过软件包安装。 |
 | `--admin` / `--site-name` | 初始管理员和站点名称。 |
+| `--service-name` | 指定面板服务名，默认是 `nekopass`。 |
 | `--reinstall` | 清空该服务的面板数据库并全新安装。 |
 | `--yes` | 使用参数与默认值，不交互询问。 |
 | `--dry-run` | 只验证参数，不安装。 |
 
-全部参数：`bash install-panel.sh --help`。忘记密码见 [日常管理](./manage.md#重置管理员密码)。
+运行 `bash install-panel.sh --help` 查看完整参数。
 
 ## 重新安装
 
-默认以 `control.env` 是否存在判断已有安装；配置不存在时允许重跑，复用同名数据库并保留已有管理员。
+已有安装需要升级时，请用[更新命令](./manage.md#更新面板)。[卸载面板](./manage.md#卸载面板)后，可在原 PostgreSQL 集群中用原服务名重新安装，沿用同名数据库和原来的管理员。
 
-清空数据库并全新安装：
+只有确定要清空面板数据时才使用 `--reinstall`：
 
 ```bash
 sudo bash install-panel.sh --reinstall
 ```
 
-**此操作会删除所选 PostgreSQL 实例中该服务的全部面板数据，包括用户、余额、订单、套餐、节点和规则，并重新生成管理员密码。** 执行前自行备份。交互时输入服务名确认；加 `--yes` 会直接执行，不再确认。
-
-只处理 `--service-name` 指定的面板，默认 `nekopass`；同机节点端的配置与状态保留。原节点密钥会随面板数据库清空，节点需在新面板重新添加并配置密钥。
+**先备份数据库。** 此操作会删除所选 PostgreSQL 集群中对应面板的用户、余额、订单、套餐、节点和规则，并重新生成管理员密码。节点需要在新面板重新添加并配置密钥。交互安装会要求输入服务名确认，传入 `--yes` 会跳过确认。

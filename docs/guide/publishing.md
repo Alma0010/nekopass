@@ -1,46 +1,34 @@
 # 发布与文档部署
 
-本 fork 的仓库是 [Alma0010/nekopass](https://github.com/Alma0010/nekopass)，安装、检查更新和下载发布文件均使用此仓库。文档站部署地址为 [Alma0010.github.io/nekopass](https://Alma0010.github.io/nekopass/)，首次部署成功后可访问。
+本页供维护者使用。安装脚本和更新程序从 [Alma0010/nekopass](https://github.com/Alma0010/nekopass) 获取发布文件，文档托管在 [GitHub Pages](https://Alma0010.github.io/nekopass/)。
 
 ## 首次准备
 
-1. 将本地修改提交并推送到 `main`。
-2. 打开仓库的 **Actions**。如果 fork 的工作流尚未启用，点击 **I understand my workflows, go ahead and enable them**。
-3. 在 Actions 左侧可看到 **Publish release** 和 **Deploy documentation**。若找不到手动运行按钮，确认对应工作流已推送到仓库的默认分支。
+把待发布的提交推送到默认分支 `main`。如果是新建的 fork，先在 GitHub 的 **Actions** 页面启用工作流。
 
-在仓库目录的 PowerShell 中提交和推送：
-
-```powershell
-git status
-git add .
-git commit -m "将安装更新与文档切换到 Alma0010 仓库"
-git push origin main
-```
-
-## 发布 Releases
+## 发布新版本
 
 ### 从网页发版
 
 1. 打开 [Publish release](https://github.com/Alma0010/nekopass/actions/workflows/release.yml)。
 2. 点击 **Run workflow**，分支选择 `main`。
-3. 在 `version` 输入新的正式版本号，例如首次 fork 发版可使用 `v0.19.1`，然后点击 **Run workflow**。
+3. 在 `version` 输入一个未用过且比现有版本高的 `vX.Y.Z` 标签，点击 **Run workflow**。
 4. 等待工作流完成。它会运行检查和测试，编译 Linux amd64 / arm64 的面板与 Agent，创建草稿、上传附件，再发布正式 Release 并设为最新版本。
 5. 在 [Releases](https://github.com/Alma0010/nekopass/releases) 确认发布包和安装脚本已齐全。
 
-版本号只接受 `vX.Y.Z`，例如 `v0.19.1`；当前更新器不接受 `-alma.1` 等后缀。每次发版使用一个未使用过、数值递增的版本号。本地合并上游后可能已有上游标签，尤其 `v0.19.0` 指向上游原始提交，不能拿来标记本 fork 的修改。工作流会拒绝指向其他提交的已有标签。不要删除或强制覆盖上游标签。
-
-这个工作流会自动创建新标签及 Release，无需先在 Releases 页面手动创建同名版本。同名 Release 已存在时，创建步骤会失败；应先检查运行日志与已有草稿，再决定后续操作。
+工作流会创建标签和 Release。若已有同名标签或 Release，先查运行日志和现有草稿。合并上游时带来的标签也应保留。
 
 ### 用命令触发发版
 
-也可在已提交并推送代码后创建一个全新的标签，标签推送会自动运行同一发版工作流。以下与网页方式二选一：
+也可以推送一个新标签来触发同一工作流。将示例版本号换成要发布的版本。
 
 ```powershell
-git tag v0.19.1
-git push origin v0.19.1
+$version = 'v0.21.0'
+git tag $version
+git push origin $version
 ```
 
-不要照抄一个已存在的版本号。推送代码到 `main` 本身不会发布 Release。
+发布由手动运行工作流或推送版本标签触发。
 
 ### 发布附件
 
@@ -52,14 +40,6 @@ git push origin v0.19.1
 - 节点卸载脚本：`uninstall-agent.sh`。
 
 仅上传代码或创建一个没有上述附件的 Release，安装及在线更新仍不能正常使用。`releases/latest/download/…` 需要已经发布的正式 Release；草稿和预发布版本不适合作为此处的默认安装源。
-
-例如，发布成功后可在服务器直接完整卸载所有节点：
-
-```bash
-wget https://github.com/Alma0010/nekopass/releases/latest/download/uninstall-agent.sh -O uninstall-agent.sh && sudo bash uninstall-agent.sh
-```
-
-指定服务名卸载的用法见 [卸载节点](./node.md#卸载节点)。
 
 ## 部署 GitHub Pages 文档站
 
@@ -86,21 +66,11 @@ npm --prefix docs run build
 npm --prefix docs run preview
 ```
 
-## 已安装的面板和节点切换下载来源
+## 已安装的服务器
 
-本次修改更新的是源码中的默认值，已有服务器保存的设置及更新脚本不会因此自动变化。
+使用本仓库发布包安装的面板，按[更新面板](./manage.md#更新面板)中的步骤升级。
 
-1. 先发布本 fork 的正式 Release，确认附件可下载。
-2. 使用本 fork 的面板安装脚本覆盖升级，保留已有数据；不要添加 `--reinstall`：
-
-   ```bash
-   wget https://github.com/Alma0010/nekopass/releases/latest/download/install-panel.sh -O install-panel.sh && sudo bash install-panel.sh
-   ```
-
-3. 在面板「系统设置 → 节点安装」将安装脚本地址改为 `https://github.com/Alma0010/nekopass/releases/latest/download/install-agent.sh`，版本下载根地址改为 `https://github.com/Alma0010/nekopass/releases/download`，Agent 版本填写 `latest` 或本 fork 已发布的版本号并保存。
-4. 从面板复制最新的节点安装命令，在对应节点重新执行，以安装本 fork 的 Agent 和更新组件。独立命名实例继续使用原有 `--service-name`。
-
-不要只替换服务器上的二进制就认为更新来源也已切换；旧安装留下的更新脚本也需要通过新版安装流程更新。此 fork 的节点组整合需要协议版本 25 的 Agent，面板与节点应使用此 fork 发布的配套版本。
+需要切换已有 Agent 的下载来源时，在面板修改[节点下载配置](./node.md#下载配置)，再到每台服务器执行新的安装命令。自定义实例继续使用原来的 `--service-name`。这样会一并更新 Agent 和下载组件。
 
 ## 常见问题
 

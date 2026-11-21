@@ -85,10 +85,14 @@ class UpdaterTests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as temp:
    lock=pathlib.Path(temp)/'lock';real_open=pathlib.Path.open
    def open_path(path,*args,**kwargs):return real_open(lock,*args,**kwargs)
-   with patch.object(sys,'argv',['updater','--service','nekopass','--version','v0.13.3']),patch.object(updater.os,'geteuid',return_value=0,create=True),patch.object(updater.pathlib.Path,'open',open_path),patch.object(updater.fcntl,'flock',create=True),patch.object(updater.fcntl,'LOCK_EX',1,create=True),patch.object(updater,'setup_panel_update') as setup,patch.object(updater,'update') as update:
+   with patch.object(sys,'argv',['updater','--service','nekopass','--version','v0.13.3']),patch.object(updater.os,'geteuid',return_value=0,create=True),patch.object(updater.pathlib.Path,'open',open_path),patch.object(updater.pathlib.Path,'is_file',return_value=True) as binary,patch.object(updater.fcntl,'flock',create=True) as flock,patch.object(updater.fcntl,'LOCK_EX',1,create=True),patch.object(updater,'setup_panel_update') as setup,patch.object(updater,'update') as update:
+    binary.side_effect=lambda: bool(flock.call_count)
     self.assertEqual(updater.main(),0)
     setup.assert_called_once_with('nekopass')
     update.assert_called_once_with('nekopass','v0.13.3')
+    setup.reset_mock();update.reset_mock();binary.side_effect=None;binary.return_value=False
+    with patch.object(sys,'stderr',io.StringIO()):self.assertEqual(updater.main(),1)
+    setup.assert_not_called();update.assert_not_called()
  @unittest.skipIf(sys.platform=='win32','Linux directory modes')
  def test_staged_panel_can_be_executed_under_private_umask(self):
   with tempfile.TemporaryDirectory() as temp:

@@ -1,33 +1,100 @@
 <script setup lang="ts">
 import { copyText } from './clipboard'
-import { ref, reactive, watch,computed,onMounted } from 'vue'
+import { ref, reactive, watch,computed,onMounted,onUnmounted } from 'vue'
 import {consumeCreateIntent} from './page'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { api, APIError, type Node, type NodeInput, type NodeGroup,type NodeGroupMember } from './api'
+import { api, APIError, type Node, type NodeDeleteResult, type NodeInput, type NodeGroup,type NodeGroupMember } from './api'
 import Icon from './Icon.vue'
 import GroupTags from './GroupTags.vue'
 import LimitInput from './LimitInput.vue'
 import NodeProtocolsDialog from './NodeProtocolsDialog.vue'
 import NodeSecurityDialog from './NodeSecurityDialog.vue'
 import NodeConnectionFields from './NodeConnectionFields.vue'
+import NodeBatchCreateDialog from './NodeBatchCreateDialog.vue'
 import TLSInboundsDialog from './TLSInboundsDialog.vue'
 import {newerVersion,planNodeUpdates,type UpdateSkip} from './node-updates'
 import type {NodeTransportInput,NodeSecurityInput} from './node-protocol'
 import {nodeTLSDefaults as tlsDefaults,nodeTLSConfig as tlsConfig,applyNodeTransport,applyNodeSecurity} from './node-protocol'
 const props=withDefaults(defineProps<{ nodes: Node[]; groups: NodeGroup[]; view?: 'nodes' | 'groups' }>(), {view:'nodes'})
 const nodeScope=ref(new URLSearchParams(location.search).get('status')==='offline'?'offline':'')
-const visibleNodes=computed(()=>nodeScope.value==='offline'?props.nodes.filter(n=>n.enabled&&!n.online):props.nodes)
-function clearNodeScope(){nodeScope.value='';const url=new URL(location.href);url.searchParams.delete('status');history.replaceState(null,'',url.pathname+url.search)}
+const nodeSearch=ref(''), nodeGroup=ref(0), selectedIDs=ref(new Set<number>())
+const visibleNodes=computed(()=>{
+ const search=nodeSearch.value.trim().toLowerCase()
+ return props.nodes.filter(node=>{
+  if(nodeScope.value==='offline'&&!(node.enabled&&!node.online))return false
+  if(nodeScope.value==='online'&&!(node.enabled&&node.online))return false
+  if(nodeScope.value==='disabled'&&node.enabled)return false
+  if(nodeGroup.value&& !node.group_ids.includes(nodeGroup.value))return false
+  return !search||`${node.name} ${node.public_address||''}`.toLowerCase().includes(search)
+ })
+})
+const selectedNodes=computed(()=>visibleNodes.value.filter(node=>selectedIDs.value.has(node.id)))
+const allVisibleSelected=computed(()=>visibleNodes.value.length>0&&selectedNodes.value.length===visibleNodes.value.length)
+let selectionAnchor=0
+let dragStart:{id:number;selected:boolean}|null=null
+watch([nodeScope,nodeSearch,nodeGroup],()=>{
+ selectedIDs.value.clear();selectionAnchor=0;dragStart=null
+ if(nodeScope.value!=='offline'&&new URLSearchParams(location.search).get('status')==='offline'){
+  const url=new URL(location.href);url.searchParams.delete('status');history.replaceState(null,'',url.pathname+url.search)
+ }
+})
+watch(visibleNodes,nodes=>{
+ const ids=new Set(nodes.map(node=>node.id))
+ for(const id of selectedIDs.value)if(!ids.has(id))selectedIDs.value.delete(id)
+ if(!ids.has(selectionAnchor))selectionAnchor=0
+})
+function selectVisible(selected:boolean){
+ selectedIDs.value=new Set(selected?visibleNodes.value.map(node=>node.id):[])
+ selectionAnchor=0
+}
+function selectNode(id:number, selected:boolean){
+ if(selected)selectedIDs.value.add(id)
+ else selectedIDs.value.delete(id)
+}
+function selectRange(startID:number,endID:number,selected:boolean){
+ const ids=visibleNodes.value.map(node=>node.id)
+ const start=ids.indexOf(startID), end=ids.indexOf(endID)
+ if(start<0||end<0)return
+ for(const id of ids.slice(Math.min(start,end),Math.max(start,end)+1))selectNode(id,selected)
+}
+function startSelection(id:number,event:PointerEvent){
+ if(event.button!==0||event.pointerType==='touch')return
+ event.preventDefault()
+ const label=event.currentTarget as HTMLElement
+ label.querySelector('input')?.focus({preventScroll:true})
+ const selected=!selectedIDs.value.has(id)
+ if(event.shiftKey&&selectionAnchor)selectRange(selectionAnchor,id,selected)
+ else{selectNode(id,selected);selectionAnchor=id}
+ dragStart={id,selected}
+}
+function stopSelection(){dragStart=null}
+onMounted(()=>{window.addEventListener('pointerup',stopSelection);window.addEventListener('pointercancel',stopSelection)})
+onUnmounted(()=>{window.removeEventListener('pointerup',stopSelection);window.removeEventListener('pointercancel',stopSelection)})
+function extendSelection(id:number,event:PointerEvent){
+ if(dragStart&&(event.buttons&1)&&dragStart.id!==id){
+  selectRange(dragStart.id,id,dragStart.selected)
+ }
+}
+function preventDuplicateClick(event:MouseEvent){
+ if(event.detail>0&&(event as PointerEvent).pointerType!=='touch')event.preventDefault()
+}
+function checkboxChanged(id:number,event:Event){
+ selectNode(id,(event.target as HTMLInputElement).checked);selectionAnchor=id
+}
 onMounted(()=>{if(props.view==='nodes'&&consumeCreateIntent())editNode()})
 const emit = defineEmits<{ refresh: [] }>()
-const updatingNode=ref(0),bulkUpdating=ref(false),batchDone=ref(0),batchTotal=ref(0),batchResultOpen=ref(false)
-type BatchResult={version:string;submitted:number;skipped:Record<UpdateSkip,number>;failures:{name:string;error:string}[];notSubmitted:number}
+const updatingNode=ref(0),removingNode=ref(0),bulkUpdating=ref(false),bulkRemoving=ref(false),batchDone=ref(0),batchTotal=ref(0),batchResultOpen=ref(false)
+const batchCreateOpen=ref(false)
+const batchInProgress=computed(()=>bulkUpdating.value||bulkRemoving.value)
+const nodeActionInProgress=computed(()=>batchInProgress.value||!!updatingNode.value||!!removingNode.value)
+type BatchSkip=UpdateSkip|'uninstalling'
+type BatchResult={version:string;submitted:number;skipped:Record<BatchSkip,number>;failures:{name:string;error:string}[];notSubmitted:number}
 const batchResult=ref<BatchResult|null>(null)
-const skipLabels:Record<UpdateSkip,string>={current:'已是目标版本或更新版本',offline:'离线',unsupported:'尚未安装更新服务',updating:'已有更新任务'}
-function skippedText(skipped:Record<UpdateSkip,number>){return (Object.keys(skipLabels) as UpdateSkip[]).filter(key=>skipped[key]).map(key=>`${skipLabels[key]} ${skipped[key]} 个`).join('；') || '无'}
+const skipLabels:Record<BatchSkip,string>={current:'已是目标版本或更新版本',offline:'离线',unsupported:'尚未安装更新服务',updating:'已有更新任务',uninstalling:'已有卸载任务'}
+function skippedText(skipped:Record<BatchSkip,number>){return (Object.keys(skipLabels) as BatchSkip[]).filter(key=>skipped[key]).map(key=>`${skipLabels[key]} ${skipped[key]} 个`).join('；') || '无'}
 async function latestVersion(){const data=await api<{latest:{version:string}}>('admin/updates');return data.latest.version}
 async function updateNode(n:Node){
- if(bulkUpdating.value||updatingNode.value)return
+ if(nodeActionInProgress.value||n.uninstall_status)return
  if(!n.update_supported){ElMessage.warning('请先重新运行新版节点安装命令，以安装更新服务');return}
  updatingNode.value=n.id
  try{
@@ -37,14 +104,21 @@ async function updateNode(n:Node){
   await api(`admin/nodes/${n.id}/update`,'POST',{version});ElMessage.success('更新任务已下发');emit('refresh')
  }catch(e){if(e instanceof Error)ElMessage.error(e.message)}finally{updatingNode.value=0}
 }
-async function updateAllNodes(){
- if(bulkUpdating.value||updatingNode.value)return
+async function updateSelectedNodes(){
+ if(nodeActionInProgress.value)return
+ const hasSelection=selectedNodes.value.length>0
+ const toUpdate=hasSelection?selectedNodes.value:visibleNodes.value
+ const ids=new Set(toUpdate.map(node=>node.id))
+ const title=ids.size===props.nodes.length?'更新所有节点':'批量更新节点'
  bulkUpdating.value=true;batchDone.value=0;batchTotal.value=0
  try{
   const [version,nodes]=await Promise.all([latestVersion(),api<Node[]>('admin/nodes')])
-  const {candidates,skipped}=planNodeUpdates(nodes,version)
+  const scoped=nodes.filter(node=>ids.has(node.id))
+  const {candidates,skipped:updateSkips}=planNodeUpdates(scoped.filter(node=>!node.uninstall_status),version)
+  const skipped={...updateSkips,uninstalling:scoped.filter(node=>node.uninstall_status).length}
   if(!candidates.length){ElMessage.info(`没有需要更新的节点。跳过：${skippedText(skipped)}`);emit('refresh');return}
-  await ElMessageBox.confirm(`将向 ${candidates.length} 个节点下发 ${version} 更新。节点会重启并中断现有转发连接。跳过：${skippedText(skipped)}。`,'更新所有节点',{confirmButtonText:`更新 ${candidates.length} 个节点`,cancelButtonText:'取消',type:'warning'})
+  const scope=hasSelection?'':'未勾选节点，将检查当前筛选结果。'
+  await ElMessageBox.confirm(`${scope}将向 ${candidates.length} 个节点下发 ${version} 更新。节点会重启并中断现有转发连接。跳过：${skippedText(skipped)}。`,title,{confirmButtonText:`更新 ${candidates.length} 个节点`,cancelButtonText:'取消',type:'warning'})
   const result:BatchResult={version,submitted:0,skipped,failures:[],notSubmitted:0}
   batchTotal.value=candidates.length
   // Submit one at a time; each node still uses the existing source and update checks.
@@ -88,24 +162,175 @@ async function saveNode() { await act(async()=>{
 }) }
 
 async function saveGroup() { await act(async () => { await api(`admin/node-groups${groupID.value ? '/' + groupID.value : ''}`, groupID.value ? 'PUT' : 'POST', groupForm); groupDialog.value = false; ElMessage.success('节点组已保存') }) }
-async function remove(kind: 'nodes' | 'node-groups', id: number) {
+async function removeGroup(id:number){
  try {
-  await ElMessageBox.confirm(kind==='nodes'?'删除节点？请先停用节点，并迁移或删除仍使用它的转发规则。':'删除节点组？正在被套餐使用的组无法删除。','确认删除',{confirmButtonText:'删除',cancelButtonText:'取消'})
-  busy.value=true
-  try{await api(`admin/${kind}/${id}`,'DELETE',{})}
-  catch(e){
-   if(kind!=='nodes'||!(e instanceof APIError)||e.code!=='node_delete_confirmation_required')throw e
-   busy.value=false
-   await ElMessageBox.confirm('此节点有历史用量或额度授权。强制删除后，节点及密钥将被移除，历史账本仍保留；已下发但未归还的额度不会因删除返还。是否继续？','强制删除节点',{type:'warning',confirmButtonText:'确认强制删除',cancelButtonText:'取消'})
-   busy.value=true
-   await api(`admin/nodes/${id}?force=true`,'DELETE',{})
+  await ElMessageBox.confirm('删除节点组？正在被套餐使用的组无法删除。','确认删除',{confirmButtonText:'删除',cancelButtonText:'取消'})
+  await act(async()=>{await api(`admin/node-groups/${id}`,'DELETE',{});ElMessage.success('节点组已删除')})
+ }catch(e){if(e instanceof Error)ElMessage.error(e.message)}
+}
+function deleteRequest(id:number,force=false,recordOnly=false){
+ const query=new URLSearchParams()
+ if(force)query.set('force','true')
+ if(recordOnly)query.set('record_only','true')
+ return api<NodeDeleteResult>(`admin/nodes/${id}${query.size?`?${query}`:''}`,'DELETE',{})
+}
+function confirmsLedger(e:unknown){return e instanceof APIError&&e.code==='node_delete_confirmation_required'}
+function needsManualRemoval(e:unknown){return e instanceof APIError&&e.code==='node_uninstall_manual_required'}
+function queued(result:NodeDeleteResult){return 'uninstall_state' in result&&result.uninstall_state==='queued'}
+function confirmLedger(detail:string){
+ return ElMessageBox.confirm(`${detail}有历史用量或额度授权。历史账本仍保留，已下发但未归还的额度不会因删除返还。是否继续？`,'确认历史用量',{type:'warning',confirmButtonText:'确认继续',cancelButtonText:'取消'})
+}
+function confirmRecordOnly(node:Node){
+ const warning=node.uninstall_status?.state==='queued'?'已下发到服务器的卸载任务仍可能完成。':'如需卸载，请到节点服务器手动处理。'
+ return ElMessageBox.confirm(`将删除「${node.name}」的面板记录和密钥。${warning}`,'仅删除面板记录',{type:'warning',confirmButtonText:'仅删除面板记录',cancelButtonText:'取消'})
+}
+async function removeNode(node:Node,recordOnly=false){
+ if(nodeActionInProgress.value)return
+ removingNode.value=node.id
+ try{
+  if(recordOnly)await confirmRecordOnly(node)
+  else{
+   const retry=node.uninstall_status?.state==='failed'
+   await ElMessageBox.confirm(`${retry?'重试卸载':'卸载'}「${node.name}」？请先停用节点并移走相关转发规则。已安装的节点会在连上面板后卸载对应服务。`,retry?'重试卸载':'确认卸载',{type:'warning',confirmButtonText:retry?'重试卸载':'卸载',cancelButtonText:'取消'})
   }
-  emit('refresh');ElMessage.success(kind==='nodes'?'节点已删除':'节点组已删除')
- }catch(e){if(e instanceof Error)ElMessage.error(e.message)}finally{busy.value=false}
+  let force=false
+  while(true){
+   try{
+    const result=await deleteRequest(node.id,force,recordOnly)
+    ElMessage.success(queued(result)?'卸载任务已加入队列，节点连接后处理。':'已删除节点记录')
+    emit('refresh');return
+   }catch(e){
+    if(!force&&confirmsLedger(e)){await confirmLedger('此节点');force=true;continue}
+    if(!recordOnly&&needsManualRemoval(e)){await confirmRecordOnly(node);recordOnly=true;continue}
+    throw e
+   }
+  }
+ }catch(e){if(e instanceof Error)ElMessage.error(e.message)}finally{removingNode.value=0}
+}
+type RemovalRow={name:string;status:string;error:string}
+const removalResults=ref<RemovalRow[]>([]),removalResultOpen=ref(false)
+async function removeSelectedNodes(){
+ if(nodeActionInProgress.value||!selectedNodes.value.length)return
+ const nodes=[...selectedNodes.value]
+ bulkRemoving.value=true;batchDone.value=0;batchTotal.value=0
+ try{
+  await ElMessageBox.confirm(`处理选中的 ${nodes.length} 个节点？已安装的节点会在连接后卸载对应服务，未安装的节点会直接删除。请先停用节点并移走相关规则。`,'批量卸载节点',{type:'warning',confirmButtonText:`卸载 ${nodes.length} 个节点`,cancelButtonText:'取消'})
+  const withLedger:{node:Node;row:RemovalRow}[]=[]
+  const result=nodes.map(node=>({name:node.name,status:'未提交',error:''}))
+  async function submit(node:Node,row:RemovalRow,force:boolean){
+   try{
+    row.status=queued(await deleteRequest(node.id,force))?'等待卸载':'已删除';row.error=''
+   }catch(e){
+    if(!force&&confirmsLedger(e)){row.status='待确认';withLedger.push({node,row});return}
+    row.status=needsManualRemoval(e)?'需手动卸载':'提交失败'
+    row.error=needsManualRemoval(e)?'请在服务器上卸载，再从对应行删除面板记录。':e instanceof Error?e.message:'请求失败'
+    if(e instanceof APIError&&(e.status===401||e.status===403))return false
+   }
+  }
+  batchTotal.value=nodes.length
+  let stopped=false
+  for(let i=0;i<nodes.length;i++){
+   stopped=(await submit(nodes[i],result[i],false))===false
+   batchDone.value++
+   if(stopped)break
+  }
+  if(withLedger.length&&!stopped){
+   try{
+    await confirmLedger(`其中 ${withLedger.length} 个节点（${withLedger.slice(0,5).map(item=>item.node.name).join('、')}${withLedger.length>5?' 等':''}）`)
+    for(const {node,row} of withLedger)if((await submit(node,row,true))===false)break
+   }catch(e){if(e instanceof Error)ElMessage.error(e.message)}
+  }
+  selectVisible(false);removalResults.value=result;removalResultOpen.value=true;emit('refresh')
+ }catch(e){if(e instanceof Error)ElMessage.error(e.message)}finally{bulkRemoving.value=false}
+}
+function runBatch(action:string){
+ if(nodeActionInProgress.value)return
+ if(action==='create')batchCreateOpen.value=true
+ if(action==='update')void updateSelectedNodes()
+ if(action==='remove')void removeSelectedNodes()
 }
 </script>
 <template>
- <section class="surface"><div class="section-header"><strong>{{view === 'groups' ? '节点组管理' : '节点管理'}}</strong><div class="admin-actions"><el-button :loading="bulkUpdating" :disabled="!nodes.length || !!updatingNode" @click="updateAllNodes">更新所有节点{{bulkUpdating && batchTotal ? ` · ${batchDone}/${batchTotal}` : ''}}</el-button><el-button @click="editGroup()"><Icon name="folder" />创建节点组</el-button><el-button type="primary" @click="editNode()"><Icon name="add" />添加节点</el-button></div></div><div class="section-body"><nav class="admin-resource-tabs"><a href="/admin/nodes" :class="{active:view==='nodes'}">节点列表</a><a href="/admin/node_groups" :class="{active:view==='groups'}">节点组</a></nav><div v-if="view==='nodes'"><p class="subtle management-intro">入口与出口关系、隧道端口、转发限制和探针配置均由主控下发。节点只需配置主控连接信息。</p><p v-if="nodeScope" class="field-tip">仅显示已启用的离线节点 <el-button link type="primary" @click="clearNodeScope">显示全部节点</el-button></p><el-table :data="visibleNodes" empty-text="暂无节点"><el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip /><el-table-column prop="public_address" label="公网地址" min-width="155" show-overflow-tooltip><template #default="{ row }">{{ row.public_address || '未配置' }}</template></el-table-column><el-table-column label="节点组" min-width="145"><template #default="{ row }"><GroupTags :ids="row.group_ids" :groups="groups" empty-text="未分组" /></template></el-table-column><el-table-column label="用途" width="112"><template #default="{ row }"><el-tag v-if="row.ingress_enabled" class="group-chip">入口</el-tag><el-tag v-if="row.tunnel_exit_enabled" class="group-chip" type="success">出口</el-tag><span v-if="!row.ingress_enabled && !row.tunnel_exit_enabled" class="subtle">未启用</span></template></el-table-column><el-table-column label="状态" width="76"><template #default="{ row }">{{ !row.enabled ? '已停用' : row.online ? '在线' : '离线' }}</template></el-table-column><el-table-column label="配置同步" min-width="130"><template #default="{ row }"><span :class="{ danger: row.sync_error }">{{ row.sync_error || (row.applied_revision >= row.config_revision && row.applied_revision ? '已同步' : '等待同步') }}</span></template></el-table-column><el-table-column label="节点版本" min-width="145"><template #default="{row}"><div>{{row.agent_version || '未知版本'}}</div><small v-if="row.update_status" :class="{danger:row.update_status.state==='failed'}">{{updateStates[row.update_status.state]}} {{row.update_status.error}}</small><small v-else-if="!row.update_supported" class="subtle">需安装更新服务</small></template></el-table-column><el-table-column label="TLS 证书" min-width="130"><template #default="{row}"><span v-if="row.tunnel_security==='tls'">{{row.tls_error || row.tls_status}}<small v-if="row.tls_not_after"> · {{new Date(row.tls_not_after).toLocaleDateString()}}</small></span><span v-else>—</span></template></el-table-column><el-table-column prop="active_connections" label="转发连接" width="84" /><el-table-column fixed="right" class-name="table-actions" label="操作" width="196"><template #default="{ row }"><el-button link type="primary" @click="installation(row.id)">安装命令</el-button><el-button link type="primary" @click="editNode(row)">编辑</el-button><el-button link type="primary" tag="a" :href="`/admin/nodes/${row.id}/ddns`">DDNS</el-button><el-button link type="primary" tag="a" :href="`/admin/nodes/${row.id}/ip-recovery`">自动换 IP</el-button><el-button link type="primary" :loading="updatingNode===row.id" :disabled="bulkUpdating || !!updatingNode || !row.online || ['queued','running'].includes(row.update_status?.state || '')" @click="updateNode(row)">更新</el-button><el-button link type="danger" @click="remove('nodes', row.id)">删除</el-button></template></el-table-column></el-table></div><div v-else><el-table :data="groups" empty-text="暂无节点组"><el-table-column prop="name" label="名称" min-width="170" /><el-table-column prop="description" label="说明" min-width="200" /><el-table-column label="节点数" width="100"><template #default="{ row }">{{ row.node_ids.length }}</template></el-table-column><el-table-column label="负载策略" min-width="150"><template #default="{row}">{{({least_connections:'加权最少连接',round_robin:'加权轮询',random:'加权随机'} as Record<string,string>)[row.strategy]||'加权最少连接'}}</template></el-table-column><el-table-column prop="plan_count" label="关联套餐" width="100" /><el-table-column prop="sort_order" label="显示顺序" width="100" /><el-table-column label="状态" width="76"><template #default="{ row }">{{ row.enabled ? '启用' : '停用' }}</template></el-table-column><el-table-column fixed="right" class-name="table-actions" label="操作" width="130"><template #default="{ row }"><el-button link type="primary" @click="editGroup(row)">编辑</el-button><el-button link type="danger" :disabled="row.plan_count > 0" @click="remove('node-groups', row.id)">删除</el-button></template></el-table-column></el-table></div></div></section>
+ <section class="surface">
+  <div class="section-header">
+   <strong>{{view === 'groups' ? '节点组管理' : '节点管理'}}</strong>
+   <div class="admin-actions">
+    <el-dropdown v-if="view==='nodes'" trigger="click" @command="runBatch">
+     <el-button :loading="batchInProgress" :disabled="nodeActionInProgress">批量操作{{batchInProgress && batchTotal ? ` · ${batchDone}/${batchTotal}` : ''}}</el-button>
+     <template #dropdown><el-dropdown-menu>
+      <el-dropdown-item command="create">批量创建</el-dropdown-item>
+      <el-dropdown-item command="update" :disabled="!visibleNodes.length">批量更新</el-dropdown-item>
+      <el-dropdown-item command="remove" :disabled="!selectedNodes.length">批量卸载</el-dropdown-item>
+     </el-dropdown-menu></template>
+    </el-dropdown>
+    <el-button @click="editGroup()"><Icon name="folder" />创建节点组</el-button>
+    <el-button type="primary" @click="editNode()"><Icon name="add" />添加节点</el-button>
+   </div>
+  </div>
+  <div class="section-body">
+   <nav class="admin-resource-tabs"><a href="/admin/nodes" :class="{active:view==='nodes'}">节点列表</a><a href="/admin/node_groups" :class="{active:view==='groups'}">节点组</a></nav>
+   <div v-if="view==='nodes'">
+    <div class="node-filters">
+     <el-input v-model="nodeSearch" aria-label="搜索节点" placeholder="搜索名称、公网地址" clearable />
+     <el-select v-model="nodeScope" aria-label="筛选节点状态">
+      <el-option label="全部状态" value="" /><el-option label="在线" value="online" />
+      <el-option label="离线" value="offline" /><el-option label="已停用" value="disabled" />
+     </el-select>
+     <el-select v-model="nodeGroup" aria-label="筛选节点组" filterable>
+      <el-option label="全部节点组" :value="0" />
+      <el-option v-for="group in groups" :key="group.id" :label="group.name" :value="group.id" />
+     </el-select>
+     <span v-if="selectedNodes.length" class="subtle">已选 {{selectedNodes.length}} / {{visibleNodes.length}}<el-button link type="primary" @click="selectVisible(false)">清空</el-button></span>
+    </div>
+    <p v-if="nodeScope==='offline'" class="field-tip">仅显示已启用的离线节点 <el-button link type="primary" @click="nodeScope=''">显示全部节点</el-button></p>
+    <el-table :data="visibleNodes" row-key="id" empty-text="暂无匹配的节点">
+     <el-table-column width="48" align="center">
+      <template #header>
+       <input type="checkbox" aria-label="全选当前筛选结果" :disabled="!visibleNodes.length" :checked="allVisibleSelected" :indeterminate.prop="selectedNodes.length>0&&!allVisibleSelected" @change="selectVisible(!allVisibleSelected)" />
+      </template>
+      <template #default="{row}">
+       <label class="node-select-area" @pointerdown="startSelection(row.id,$event)" @pointerenter="extendSelection(row.id,$event)" @click="preventDuplicateClick">
+        <input type="checkbox" :aria-label="`选择 ${row.name}`" :checked="selectedIDs.has(row.id)" @change="checkboxChanged(row.id,$event)" />
+       </label>
+      </template>
+     </el-table-column>
+     <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
+     <el-table-column prop="public_address" label="公网地址" min-width="155" show-overflow-tooltip><template #default="{ row }">{{ row.public_address || '未配置' }}</template></el-table-column>
+     <el-table-column label="节点组" min-width="145"><template #default="{ row }"><GroupTags :ids="row.group_ids" :groups="groups" empty-text="未分组" /></template></el-table-column>
+     <el-table-column label="用途" width="112"><template #default="{ row }"><el-tag v-if="row.ingress_enabled" class="group-chip">入口</el-tag><el-tag v-if="row.tunnel_exit_enabled" class="group-chip" type="success">出口</el-tag><span v-if="!row.ingress_enabled && !row.tunnel_exit_enabled" class="subtle">未启用</span></template></el-table-column>
+     <el-table-column label="状态" min-width="92">
+      <template #default="{row}">
+       <span :class="{danger:row.uninstall_status?.state==='failed'}">{{row.uninstall_status?.state==='queued'?'等待卸载':row.uninstall_status?.state==='failed'?'卸载失败':!row.enabled?'已停用':row.online?'在线':'离线'}}</span>
+       <small v-if="row.uninstall_status?.error" class="danger">{{row.uninstall_status.error}}</small>
+      </template>
+     </el-table-column>
+     <el-table-column label="配置同步" min-width="130"><template #default="{ row }"><span :class="{ danger: row.sync_error }">{{ row.sync_error || (row.applied_revision >= row.config_revision && row.applied_revision ? '已同步' : '等待同步') }}</span></template></el-table-column>
+     <el-table-column label="节点版本" min-width="145"><template #default="{row}"><div>{{row.agent_version || '未知版本'}}</div><small v-if="row.update_status" :class="{danger:row.update_status.state==='failed'}">{{updateStates[row.update_status.state]}} {{row.update_status.error}}</small><small v-else-if="!row.update_supported" class="subtle">需安装更新服务</small></template></el-table-column>
+     <el-table-column label="TLS 证书" min-width="130"><template #default="{row}"><span v-if="row.tunnel_security==='tls'">{{row.tls_error || row.tls_status}}<small v-if="row.tls_not_after"> · {{new Date(row.tls_not_after).toLocaleDateString()}}</small></span><span v-else>—</span></template></el-table-column>
+     <el-table-column prop="active_connections" label="转发连接" width="84" />
+     <el-table-column fixed="right" class-name="table-actions" label="操作" width="196">
+      <template #default="{row}">
+       <el-button link type="primary" @click="installation(row.id)">安装命令</el-button>
+       <el-button link type="primary" @click="editNode(row)">编辑</el-button>
+       <el-button link type="primary" tag="a" :href="`/admin/nodes/${row.id}/ddns`">DDNS</el-button>
+       <el-button link type="primary" tag="a" :href="`/admin/nodes/${row.id}/ip-recovery`">自动换 IP</el-button>
+       <el-button link type="primary" :loading="updatingNode===row.id" :disabled="nodeActionInProgress || !row.online || !!row.uninstall_status || ['queued','running'].includes(row.update_status?.state || '')" @click="updateNode(row)">更新</el-button>
+       <el-button v-if="row.uninstall_status?.state!=='queued'" link type="danger" :loading="removingNode===row.id" :disabled="nodeActionInProgress" @click="removeNode(row)">{{row.uninstall_status?.state==='failed'?'重试卸载':'卸载'}}</el-button>
+       <el-button v-if="row.uninstall_status || (row.bound&&!row.enabled&&!row.uninstall_supported)" link type="danger" :disabled="nodeActionInProgress" @click="removeNode(row,true)">仅删除面板记录</el-button>
+      </template>
+     </el-table-column>
+    </el-table>
+   </div>
+   <div v-else><el-table :data="groups" empty-text="暂无节点组"><el-table-column prop="name" label="名称" min-width="170" /><el-table-column prop="description" label="说明" min-width="200" /><el-table-column label="节点数" width="100"><template #default="{ row }">{{ row.node_ids.length }}</template></el-table-column><el-table-column label="负载策略" min-width="150"><template #default="{row}">{{({least_connections:'加权最少连接',round_robin:'加权轮询',random:'加权随机'} as Record<string,string>)[row.strategy]||'加权最少连接'}}</template></el-table-column><el-table-column prop="plan_count" label="关联套餐" width="100" /><el-table-column prop="sort_order" label="显示顺序" width="100" /><el-table-column label="状态" width="76"><template #default="{ row }">{{ row.enabled ? '启用' : '停用' }}</template></el-table-column><el-table-column fixed="right" class-name="table-actions" label="操作" width="130"><template #default="{ row }"><el-button link type="primary" @click="editGroup(row)">编辑</el-button><el-button link type="danger" :disabled="row.plan_count > 0" @click="removeGroup(row.id)">删除</el-button></template></el-table-column></el-table></div></div></section>
+ <NodeBatchCreateDialog v-model="batchCreateOpen" :groups="groups" :make-defaults="defaults" @created="emit('refresh')" />
+ <el-dialog v-model="removalResultOpen" title="节点批量卸载结果" width="650px" class="managed-form-dialog">
+  <el-table :data="removalResults">
+   <el-table-column prop="name" label="节点" min-width="130" />
+   <el-table-column prop="status" label="状态" width="110" />
+   <el-table-column prop="error" label="说明" min-width="210" />
+  </el-table>
+  <template #footer><el-button @click="removalResultOpen=false">关闭</el-button></template>
+ </el-dialog>
  <el-dialog v-model="batchResultOpen" title="节点批量更新结果" width="620px" class="managed-form-dialog">
   <template v-if="batchResult">
    <p>{{batchResult.version}}：已下发 {{batchResult.submitted}} 个，提交失败 {{batchResult.failures.length}} 个。</p>
@@ -138,4 +363,8 @@ async function remove(kind: 'nodes' | 'node-groups', id: number) {
 
 <style scoped>
 .group-health-fields{display:flex;gap:14px;flex-wrap:wrap;margin-top:18px}.group-members-table{margin-top:6px}
+.node-filters{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:12px}
+.node-filters .el-input{width:230px}.node-filters .el-select{width:155px}.node-filters .el-button{margin-left:8px}
+.node-select-area{display:flex;align-items:center;justify-content:center;min-height:28px;cursor:pointer;user-select:none}
+input[type='checkbox']{accent-color:var(--el-color-primary);margin:0;cursor:pointer}
 </style>

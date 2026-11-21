@@ -528,6 +528,9 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 	if e = acceptPublicIPReport(ctx, tx, nodeID, r.PublicIp, settings); e != nil {
 		return nil, e
 	}
+	if e = uninstallControl(ctx, tx, nodeID, r, out); e != nil {
+		return nil, e
+	}
 	if e = updateControl(ctx, tx, nodeID, r, out); e != nil {
 		return nil, e
 	}

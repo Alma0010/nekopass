@@ -89,6 +89,10 @@ type Engine struct {
 	updateStatus     *pb.UpdateStatus
 
 	updateDownloadBaseSupported bool
+
+	uninstallDirectory string
+	uninstallTicket    string
+	uninstallWrittenAt time.Time
 }
 
 var buffers = sync.Pool{New: func() any { b := make([]byte, BufferSize); return &b }}
@@ -574,7 +578,7 @@ func (e *Engine) Report() (*pb.AgentMessage, error) {
 		a.mu.Lock()
 		defer a.mu.Unlock()
 	}
-	r := &pb.AgentMessage{ProtocolVersion: pb.CurrentVersion, AgentVersion: release.Version, UpdateSupported: e.updateDirectory != "", UpdateDownloadBaseSupported: e.updateDirectory != "" && e.updateDownloadBaseSupported, UpdateStatus: e.readUpdateStatus(), AcmeAck: e.acmeAck.Load(), Probe: e.probe.Load(), InstanceId: e.state.Instance, AppliedRevision: e.revision, Error: e.syncError, ActiveConnections: e.connections.Load(), DdnsStatus: e.ddnsStatus.Load(), PublicIp: e.publicIP.Load(), IpRecoveryStatus: e.ipRecoveryStatus.Load()}
+	r := &pb.AgentMessage{ProtocolVersion: pb.CurrentVersion, AgentVersion: release.Version, UpdateSupported: e.updateDirectory != "", UpdateDownloadBaseSupported: e.updateDirectory != "" && e.updateDownloadBaseSupported, UpdateStatus: e.readUpdateStatus(), UninstallSupported: e.uninstallDirectory != "", AcmeAck: e.acmeAck.Load(), Probe: e.probe.Load(), InstanceId: e.state.Instance, AppliedRevision: e.revision, Error: e.syncError, ActiveConnections: e.connections.Load(), DdnsStatus: e.ddnsStatus.Load(), PublicIp: e.publicIP.Load(), IpRecoveryStatus: e.ipRecoveryStatus.Load()}
 	pending, err := e.state.RestorePending()
 	if err != nil {
 		return nil, err

@@ -1,4 +1,93 @@
 # Nekopass
+
+Nekopass 是一个免费的开源 TCP / UDP 转发面板，采用 GPL-3.0 许可证。面板用来管理节点、规则和用户。Agent 安装在节点上，接收面板下发的配置并处理转发。
+
+[下载最新版](https://github.com/Alma0010/nekopass/releases/latest) · [在线文档](https://alma0010.github.io/nekopass/)
+
+## 第一次部署
+
+在 Debian 或 Ubuntu 服务器上安装面板，支持 amd64 和 arm64。
+
+```bash
+wget https://github.com/Alma0010/nekopass/releases/latest/download/install-panel.sh -O install-panel.sh && sudo bash install-panel.sh
+```
+
+1. 按提示填写面板地址。已有 PostgreSQL 14 或更新版本的本机集群时，直接从菜单选一个。也可以让安装器创建新集群。
+2. 保存安装完成时显示的管理员账号和随机密码。网页默认使用 `8080`，Agent 连接面板的控制端口默认使用 `9443`。
+3. 登录后到「节点管理」添加节点，把生成的安装命令复制到节点服务器执行。节点上线后，就可以到「转发规则」添加第一条规则。
+
+[面板安装选项](docs/guide/panel.md) · [安装节点](docs/guide/node.md) · [转发规则](docs/guide/rules.md)
+
+## 更新和维护
+
+运行 `sudo nekopassctl` 打开服务菜单。也可以直接执行常用命令。
+
+| 要做的事 | 命令 |
+| --- | --- |
+| 查看面板状态 | `sudo nekopassctl panel status` |
+| 查看面板日志 | `sudo nekopassctl panel logs` |
+| 检查面板更新 | `sudo nekopassctl panel check-update` |
+| 更新面板 | `sudo nekopassctl panel update` |
+| 忘记管理员密码 | `sudo nekopassctl panel reset-password` |
+
+也可以在后台「系统设置 → 软件更新」更新面板，在「节点管理」勾选和筛选节点，通过「批量操作」创建、更新或卸载。更新会保留配置和状态，服务重启时连接会短暂中断。
+
+只需要转发时，可以在「系统设置 → 功能开关」关闭用不到的商用、邀请、工单或用户端。管理员仍可在后台管理用户和规则。各开关的具体行为见 [面板管理](docs/guide/manage.md#功能开关)。
+
+## 卸载
+
+卸载面板可在 `nekopassctl` 菜单中选择，也可以运行以下命令。
+
+```bash
+sudo nekopassctl panel uninstall
+```
+
+卸载会停止并移除选定的面板及其更新服务，归档面板配置，保留 PostgreSQL、面板数据库和 Agent。停用节点并移走相关规则后，在「节点管理」点「卸载」，面板会让对应的 Agent 卸载自己的服务。离线节点会等到重新连接后处理。已安装的节点需要重新运行新版安装命令来接入自动卸载。详见 [节点卸载说明](docs/guide/node.md)。
+
+## 还可以做什么
+
+- 把 TCP 和 UDP 分别直转或通过隧道中转，也可以让多个 TLS 规则共用端口并按 SNI 分流。见 [转发规则](docs/guide/rules.md) 和 [隧道配置](docs/guide/tunnel.md)。
+- 用节点组管理入口和出口，根据需要设置负载均衡、DDNS 和探针。见 [节点管理](docs/guide/nodes.md)。
+- 给用户分配套餐、流量和限速。需要收款时，可以启用商城、充值和续费。见 [用户与套餐](docs/guide/users.md) 和 [商城与余额](docs/guide/shop.md)。
+
+## 从源码构建
+
+需要 Go（版本见 `go.mod`）、Node.js 22.12+ 和 Python 3.9+。在仓库根目录运行以下命令。
+
+```bash
+npm --prefix web ci
+npm --prefix web run build
+go build -o dist/bin/nekopass ./cmd/nekopass
+go build -o dist/bin/nekopass-agent ./cmd/nekopass-agent
+```
+
+前端生成在 `web/dist/`，程序生成在 `dist/bin/`。用 PowerShell 7 运行 `scripts/package-panel.ps1` 可打包面板和 Agent，运行 `scripts/package-agent.ps1` 只打包 Agent。发版和文档部署见 [发布指南](docs/guide/publishing.md)。
+
+## 参与贡献
+
+Fork 后新建分支并提交 PR。一个 PR 尽量只解决一个问题，说明改动和验证结果。使用工具生成代码后，也请先弄明白它做了什么。
+
+```bash
+go test ./...
+go vet ./...
+npm --prefix web test
+npm --prefix web run build
+python scripts/check-public.py
+```
+
+数据库测试使用环境变量 `NEKOPASS_TEST_DATABASE_URL` 指向名称以 `_test` 结尾的独立 PostgreSQL 库。文档改动可用 `npm --prefix docs ci` 和 `npm --prefix docs run build` 验证。
+
+不要提交运行配置、密钥、私钥、数据库、日志或构建产物。
+
+## 鸣谢
+
+Nekopass 的转发面板设计参考了 [nyanpass](https://nyanpass.pages.dev/)，隧道实现参考了 [Xray-core](https://github.com/XTLS/Xray-core)。感谢为代理协议和开源软件做出贡献的开发者。
+
+## 项目理念
+
+<details>
+<summary>展开阅读</summary>
+
 >下列内容来自联合国世界人权宣言，gfw（中国防火长城）是对自由的侵犯，是对人权的亵渎，任何人都应该有言论和思想的自由，此软件是为了维护自由和人权而开发的，这也是此软件没有卖200USD一年，而是完全开源免费的原因
 
 >**序章**
@@ -18,136 +107,4 @@
 
 > *来源：[《联合国世界人权宣言》（简体中文）](https://www.un.org/zh/about-us/universal-declaration-of-human-rights)*
 
-
-## 概述
-Nekopass是一个开源免费的转发面板，设计参考了nyanpass，但是你不需要为nekopass支付一分钱，当然如果你乐意都话，欢迎捐款
-
-### 核心特性
-
-- 开源免费，采用 GPL-3.0 许可证。
-- 支持 TCP、UDP 分别创建规则，提供直转与隧道中转。
-- raw(tcp)、h2、raw(udp) 均可搭配明文、TLS 或全随机加密（ChaCha20-Poly1305 / AES-256-GCM）；HTTP/3 固定 TLS，支持 TCP / UDP 与 Fallback 网站。
-- TLS 入站支持多用户共用端口，按 SNI 分流，透传客户端与目标之间的 TLS 连接。
-- uTLS模拟指纹，支持 Chrome、Firefox 等握手指纹。
-- 基于h2的加密隧道，以及未认证访问的伪装网站fallback回退(防止主动探测)。
-- 支持自签名、手动导入和 ACME 自动申请、续期证书。
-- 套餐提供初始套餐资源配置，管理员可单独调整用户额度、已用流量、限速和权限。
-- 支持带宽、IP、连接数和规则数量限制，以及不限资源、永不到期设置。
-- 带宽按用户在各节点独立限速，双向业务流量支持按入口和出口倍率计费。
-- 流量额度耗尽后暂停计费线路，0 倍线路仍可使用；套餐到期停止转发，周期套餐每月重置流量。
-- 支持余额购买、手动或自动续费套餐、余额充值及订单和余额明细。
-- 可在「系统设置 → 功能开关」分别启用或关闭商用、邀请、工单和用户端。
-- 支持节点分组、入口与出口权限控制，节点配置无需手动编辑，由面板主控统一下发。
-- 提供 CPU、内存、磁盘、实时网络速率、连接数和负载探针。
-- 集成 DDNS功能，支持动态 IPv4、IPv6 地址更新。
-- 支持转发规则分组、批量管理、负载均衡、Proxy Protocol 等特性
-- 兼容 nyanpass导出的规则格式，转发规则可以从nyanpass无缝迁移
-- 提供一键安装、CLI 服务管理，以及面板和节点在线更新。
-
-## 安装面板
-
-Debian / Ubuntu，amd64 / arm64：
-
-```bash
-wget https://github.com/Alma0010/nekopass/releases/latest/download/install-panel.sh -O install-panel.sh && sudo bash install-panel.sh
-```
-
-安装时可在菜单里选择已有的 PostgreSQL 14 或更新版本的本机集群，也可以创建新的集群。全新安装完成后会显示初始管理员账号和随机密码。网页默认 `8080`，节点控制端口默认 `9443`。无人值守安装和 HTTPS 配置见 [面板安装文档](docs/guide/panel.md)。
-
-清空数据重新安装：`sudo bash install-panel.sh --reinstall`。会删除全部面板数据并生成新的管理员密码，执行前自行备份；加 `--yes` 不再确认。
-
-## 安装节点
-
-在后台「节点管理」复制安装命令，到节点服务器以 root 执行。安装、升级及卸载的完整步骤见 [安装节点](docs/guide/node.md)。
-
-## 卸载节点
-
-默认完整卸载本机全部节点（含独立命名的节点）、配置、状态数据、更新服务和专用账户，保留面板及数据库。只卸载一个节点时指定服务名。
-
-```bash
-wget https://github.com/Alma0010/nekopass/releases/latest/download/uninstall-agent.sh -O uninstall-agent.sh && sudo bash uninstall-agent.sh
-wget https://github.com/Alma0010/nekopass/releases/latest/download/uninstall-agent.sh -O uninstall-agent.sh && sudo bash uninstall-agent.sh --service-name nekopass-agent-hk1
-```
-
-以上命令依次为完整卸载、卸载指定节点，按需选择一条执行。需要先发布包含 `uninstall-agent.sh` 的正式 Release。卸载不会自动删除面板中的节点记录。
-
-## 服务管理
-
-交互菜单：`sudo nekopassctl`。`panel` 可替换为 `agent`：
-
-```bash
-sudo nekopassctl panel start        # 启动
-sudo nekopassctl panel stop         # 停止
-sudo nekopassctl panel restart      # 重启
-sudo nekopassctl panel status       # 状态
-sudo nekopassctl panel enable       # 开机自启
-sudo nekopassctl panel disable      # 关闭自启
-sudo nekopassctl panel logs         # 日志
-sudo nekopassctl panel edit         # 编辑配置
-sudo nekopassctl panel check-update # 检查更新
-sudo nekopassctl panel update       # 更新
-sudo nekopassctl agent configure    # 节点连接配置
-sudo nekopassctl panel reset-password # 重置管理员密码
-```
-
-节点也可在后台「节点管理」更新。老版本节点需先重新执行一次新版安装命令，以安装更新服务。更新保留配置及状态，服务重启会中断现有连接。
-## 文档
-
-- [在线文档](https://alma0010.github.io/nekopass/)
-- [安装面板与选择 PostgreSQL](docs/guide/panel.md)
-- [功能开关和面板管理](docs/guide/manage.md#功能开关)
-
-## 编译
-
-需要 Go（版本见 `go.mod`）、Node.js 22.12+ 和 Python 3.9+。在项目根目录执行：
-
-```bash
-npm --prefix web ci
-npm --prefix web run build
-go build -o dist/bin/nekopass ./cmd/nekopass
-go build -o dist/bin/nekopass-agent ./cmd/nekopass-agent
-```
-
-前端输出到 `web/dist/`，二进制输出到 `dist/bin/`，目标平台默认为当前系统。
-
-打包 Linux amd64 / arm64 发布文件，需要 PowerShell 7，任选其一：
-
-```bash
-pwsh -File scripts/package-panel.ps1  # 面板和节点完整发布包
-pwsh -File scripts/package-agent.ps1  # 仅节点发布文件
-```
-
-产物位于 `dist/oss/nekopass/`，可用 `-Version v0.20.4` 指定版本号。
-
-## 发布 Releases 与 GitHub Pages
-
-本仓库已包含自动打包发布和文档部署工作流。首次启用、发布版本和更新文档的完整操作见 [发布与文档部署](docs/guide/publishing.md)。
-
-## 如何贡献？
-
-Fork 本仓库，新建分支，完成修改后向本仓库提交 PR。一个 PR 尽量只处理一个功能或问题，说明修改内容和验证结果。
-
->请不要提交ai大便，即使ai生成了一个看起来能跑的代码，你最好也得知道代码具体干了什么
-
-提交前运行：
-
-```bash
-go test ./...
-go vet ./...
-npm --prefix web test
-npm --prefix web run build
-python scripts/check-public.py
-```
-
-数据库相关改动需将 `NEKOPASS_TEST_DATABASE_URL` 指向独立、名称以 `_test` 结尾的 PostgreSQL 测试库；未设置时数据库测试会跳过。文档站改动需额外执行 `npm --prefix docs ci` 和 `npm --prefix docs run build`。
-
-不要提交运行配置、密钥、私钥、数据库或日志；`.local/`、`.tools/`、`dist/` 和 `node_modules/` 不属于源代码。
-
-## 鸣谢
-此软件的设计参考了多个开源项目：
-
-[Xray-core](https://github.com/XTLS/Xray-core)nekopass的加密隧道实现参考了xray-core
-
-[nyanpass](https://nyanpass.pages.dev/) nyanpass是一款很好的被广泛使用的加密隧道中转面板，但是很不幸，他并非自由软件，而是一个闭源且需要每年支付200$才可以使用的商业软件，所以才诞生出了nekopass
-
-还需要感谢的是各种代理协议的设计者，本软件的加密隧道参考了多种代理协议的设计
+</details>

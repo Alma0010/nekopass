@@ -15,14 +15,25 @@ const initial=()=>[fixture(1),fixture(2,{online:false}),fixture(3,{update_suppor
  const browser=await chromium.launch({headless:true,...(process.env.NEKOPASS_BROWSER?{executablePath:process.env.NEKOPASS_BROWSER}:{})});
  try{
   const page=await browser.newPage({viewport:{width:1440,height:900}});await page.emulateMedia({reducedMotion:'reduce'});
-  let nodes=initial(),latestError=false,denied=false,latestReads=0;const writes=[],settingsWrites=[],errors=[];
+  let nodes=initial(),latestError=false,denied=false,latestReads=0;
+  const writes=[],settingsWrites=[],errors=[],creates=[];
+  let rejectOneCreate=true;
   let settings={site_name:'Nekopass',panel_url:'https://panel.example.test',agent_host:'agent.example.test',agent_port:443,agent_transport:'tls',registration_enabled:false,registration_email_verification:false,force_invite:false,referral_enabled:false,referral_mode:'first',referral_rate:'15',captcha_mode:'off',smtp:{host:'',port:587,security:'starttls',username:'',password:'',from:'',from_name:''},telegram:{enabled:false,token:'',admin_ids:[],notification_chat_ids:[],statistics_days:7},proxy_trusted_cidrs:[],target_deny_cidrs:[],agent_version:'latest'};
   page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/api/v1/**',async route=>{
    const request=route.request(),uri=new URL(request.url()).pathname;
    if(uri==='/api/v1/me')return route.fulfill({json:{id:1,username:'fixture',is_admin:true}});
-   if(uri==='/api/v1/admin/nodes')return route.fulfill({json:nodes});
-   if(uri==='/api/v1/admin/node-groups')return route.fulfill({json:[]});
+   if(uri==='/api/v1/admin/nodes'){
+    if(request.method()!=='POST')return route.fulfill({json:nodes});
+    const body=request.postDataJSON();creates.push(body);
+    if(body.name==='retry'&&rejectOneCreate){rejectOneCreate=false;return route.fulfill({status:400,json:{error:'fixture invalid address'}})}
+    assert.equal(nodes.some(node=>node.token===body.token),false);
+    const id=100+creates.length;
+    nodes.push(fixture(id,{...body,id,online:false}));
+    if(body.name==='lost-reply')return route.abort('failed');
+    return route.fulfill({json:{id,token:body.token}});
+   }
+   if(uri==='/api/v1/admin/node-groups')return route.fulfill({json:[{id:21,name:'fixture-group',node_ids:[]}]});
    if(uri==='/api/v1/admin/updates'){latestReads++;return latestError?route.fulfill({status:502,json:{error:'fixture release unavailable'}}):route.fulfill({json:{latest:{version:'v0.19.5'}}})}
    if(request.method()==='POST'&&/^\/api\/v1\/admin\/nodes\/\d+\/update$/.test(uri)){
     const id=Number(uri.split('/').at(-2));writes.push({id,body:request.postDataJSON()});await new Promise(resolve=>setTimeout(resolve,60));
@@ -42,10 +53,14 @@ const initial=()=>[fixture(1),fixture(2,{online:false}),fixture(3,{update_suppor
   assert.equal(await page.getByRole('button',{name:'检查更新',exact:true}).count(),0);
   assert.equal(await page.locator('.brand-logo').evaluate(el=>getComputedStyle(el).filter),'none');
   if(artifacts){fs.mkdirSync(artifacts,{recursive:true});await page.screenshot({path:path.join(artifacts,'nodes-color-logo.png')})}
-  const all=()=>page.getByRole('button',{name:/^更新所有节点/});
+  const batchAction=async name=>{
+   await page.getByRole('button',{name:/^批量操作/}).click();
+   await page.getByRole('menuitem',{name,exact:true}).click();
+  };
+  const all=()=>batchAction('批量更新');
   const confirm=()=>page.getByRole('dialog',{name:'更新所有节点',exact:true});
-  await all().click();await confirm().getByRole('button',{name:'取消',exact:true}).click();await confirm().waitFor({state:'hidden'});assert.equal(writes.length,0);
-  await all().click();await confirm().getByRole('button',{name:'更新 4 个节点',exact:true}).click();
+  await all();await confirm().getByRole('button',{name:'取消',exact:true}).click();await confirm().waitFor({state:'hidden'});assert.equal(writes.length,0);
+  await all();await confirm().getByRole('button',{name:'更新 4 个节点',exact:true}).click();
   await page.waitForFunction(()=>document.querySelectorAll('.el-button.is-loading').length>0);
   const result=()=>page.getByRole('dialog',{name:'节点批量更新结果',exact:true});await result().waitFor();
   assert.deepEqual(writes.map(w=>w.id),[1,7,8,11]);assert.equal(latestReads,2);
@@ -55,16 +70,34 @@ const initial=()=>[fixture(1),fixture(2,{online:false}),fixture(3,{update_suppor
   if(artifacts)await page.screenshot({path:path.join(artifacts,'bulk-update-results.png')});
   await result().getByRole('button',{name:'关闭',exact:true}).click();await result().waitFor({state:'hidden'});
   nodes=nodes.map(n=>({...n,online:true,update_supported:true,protocol_version:25,agent_version:'v0.19.5',update_status:null}));
-  await all().click();await page.getByText(/没有需要更新的节点/).waitFor();assert.equal(writes.length,4);assert.equal(await confirm().count(),0);
-  latestError=true;await all().click();await page.getByText('fixture release unavailable',{exact:true}).waitFor();assert.equal(writes.length,4);
+  await all();await page.getByText(/没有需要更新的节点/).waitFor();assert.equal(writes.length,4);assert.equal(await confirm().count(),0);
+  latestError=true;await all();await page.getByText('fixture release unavailable',{exact:true}).waitFor();assert.equal(writes.length,4);
   latestError=false;nodes=initial();denied=true;await page.reload();await page.getByRole('row').filter({hasText:'node-11'}).waitFor();
-  await all().click();await confirm().getByRole('button',{name:'更新 4 个节点',exact:true}).click();await result().waitFor();
+  await all();await confirm().getByRole('button',{name:'更新 4 个节点',exact:true}).click();await result().waitFor();
   assert.deepEqual(writes.slice(4).map(w=>w.id),[1,7]);assert.match(await result().innerText(),/剩余 2 个节点未提交/);
   await result().getByRole('button',{name:'关闭',exact:true}).click();await result().waitFor({state:'hidden'});
   denied=false;nodes=[fixture(1)];await page.reload();await page.getByRole('row').filter({hasText:'node-1'}).getByRole('button',{name:'更新',exact:true}).click();
   const single=page.getByRole('dialog',{name:'更新节点',exact:true});await single.getByRole('button',{name:'更新',exact:true}).click();await single.waitFor({state:'hidden'});
   await page.getByText('更新任务已下发',{exact:true}).waitFor();assert.equal(writes.at(-1).id,1);
   console.log('PASS bulk cancel, eligible-only submissions, one release lookup, partial failure, no-op, lookup failure, permission stop and individual update');
+  await batchAction('批量创建');
+  const createDialog=page.getByRole('dialog',{name:'批量创建节点',exact:true});
+  await createDialog.getByLabel('节点列表',{exact:true}).fill('first,first.example.com\nretry,retry.example.com\nlost-reply,third.example.com');
+  await createDialog.getByLabel('所属节点组',{exact:true}).press('ArrowDown');
+  await page.getByRole('option',{name:'fixture-group',exact:true}).click();
+  await createDialog.getByLabel('节点列表',{exact:true}).click();
+  await createDialog.getByRole('button',{name:'创建 3 个节点',exact:true}).click();
+  await createDialog.getByText('fixture invalid address',{exact:true}).waitFor();
+  assert.match(await createDialog.innerText(),/已创建 2 个，失败 1 个，未提交 0 个/);
+  assert.equal(await createDialog.getByLabel('节点列表',{exact:true}).inputValue(),'retry,retry.example.com');
+  await createDialog.getByRole('button',{name:'创建 1 个节点',exact:true}).click();
+  await createDialog.waitFor({state:'hidden'});
+  assert.deepEqual(creates.map(body=>body.name),['first','retry','lost-reply','retry']);
+  assert.deepEqual(creates.map(body=>body.group_ids),[[21],[21],[21],[21]]);
+  assert.equal(creates[1].token,creates[3].token);
+  assert.equal(new Set(creates.map(body=>body.token)).size,3);
+  await page.getByRole('row').filter({hasText:'retry'}).waitFor();
+  console.log('PASS bulk create shared group, partial failure, retry and committed request with lost response');
   await page.goto(base+'/admin/settings');await page.getByRole('button',{name:'保存设置',exact:true}).waitFor();
   for(const name of ['站点与连接','用户注册','邮件服务','邀请返利','Telegram','安全与 API','节点安装','软件更新']){
    await page.getByRole('tab',{name,exact:true}).click();assert.equal(await page.getByRole('button',{name:'保存设置',exact:true}).count(),1);

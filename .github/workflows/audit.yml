@@ -25,6 +25,7 @@ jobs:
           python3 -m unittest discover -s tests -p installer_prompt_test.py
           python3 -m unittest discover -s tests -p installer_url_test.py
           python3 -m unittest discover -s tests -p uninstaller_test.py
+          python3 -m unittest discover -s tests -p panel_uninstall_test.py
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod

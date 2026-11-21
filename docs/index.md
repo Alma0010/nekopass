@@ -5,26 +5,26 @@ hero:
     src: /logo.svg
     alt: Nekopass
   name: Nekopass
-  text: 用户文档
-  tagline: 安装、转发、商城与日常管理。
+  text: 安装与使用指南
+  tagline: 安装面板，接入节点，配置 TCP 和 UDP 转发。
   actions:
     - theme: brand
       text: 安装面板
       link: /guide/panel
     - theme: alt
-      text: 安装节点
-      link: /guide/node
+      text: 配置转发
+      link: /guide/rules
 features:
-  - title: 一键安装
-    details: 选择已有 PostgreSQL 集群或新建集群，自动配置服务和管理员账号。
-    link: /guide/panel
-  - title: TCP / UDP 转发
-    details: 直转与中转，支持明文、TLS；raw(tcp)、h2 和 raw(udp) 均可使用全随机加密。
-    link: /protocols/
-  - title: 用户功能
-    details: 邮箱注册、余额购买、邀请返利、工单和订单查询。
-    link: /guide/account
-  - title: 日常管理
-    details: 管理服务、查阅日志、恢复管理员密码和控制面板功能。
+  - title: 安装节点
+    details: 在面板添加节点，在服务器执行安装命令，等节点上线后即可添加规则。
+    link: /guide/node
+  - title: 配置节点中转
+    details: 给入口关联出口，按线路需要选择传输协议和加密方式。
+    link: /guide/tunnel
+  - title: 维护面板
+    details: 查看日志、升级或卸载面板、重置管理员密码。
     link: /guide/manage
+  - title: 管理站点功能
+    details: 按需开启商用、邀请、工单和用户端。
+    link: /guide/manage#功能开关
 ---
