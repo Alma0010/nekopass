@@ -2,10 +2,8 @@ package agent
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"strconv"
 	"sync"
@@ -278,6 +276,6 @@ func (e *Engine) serveTLSInbound(l *tlsInboundListener, raw net.Conn, peer strin
 	if selected.l.ctx.Err() != nil || !selected.account.valid() {
 		return
 	}
-	replay := &bufferedConn{Conn: client, reader: bufio.NewReader(io.MultiReader(bytes.NewReader(prefix), client))}
+	replay := &bufferedConn{Conn: client, prefix: prefix}
 	e.forwardPrepared(selected.l, replay, addresses, selected.account, selected.count)
 }
