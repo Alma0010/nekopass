@@ -22,7 +22,7 @@ async function reset(){try{await ElMessageBox.confirm('请先确认小助理中�
   <nav class="admin-resource-tabs"><a href="/admin/nodes">节点管理</a><a :href="`/admin/nodes/${id}/ddns`">DDNS</a><a :href="`/admin/nodes/${id}/ip-recovery`" class="active">自动换 IP</a></nav>
   <section class="surface">
    <div class="section-header"><strong>自动换 IP</strong><el-button type="primary" :loading="busy" @click="save">保存并下发</el-button></div>
-   <div class="section-body settings-form">
+   <div class="section-body settings-form layout-stack">
     <el-alert v-if="data&&data.protocol_version<19" title="此节点需要更新到支持自动换 IP 的版本后才能执行检测。" type="warning" :closable="false"/>
     <el-alert v-else-if="data&&data.protocol_version<36&&form.binding_mode==='profile'" title="此节点需要升级后才能使用档案绑定；升级前不会执行自动换 IP。" type="warning" :closable="false"/>
     <el-form label-position="top" @submit.prevent="save">

@@ -87,7 +87,8 @@ def sql(port, command, database='postgres'):
 
 
 def agent_paths(service):
-    return [pathlib.Path(parent) / service for parent in ('/etc', '/opt', '/var/lib')]
+    base = 'nekopass' if service == 'nekopass-agent' else service
+    return [pathlib.Path('/etc') / base, pathlib.Path('/opt') / base, pathlib.Path('/var/lib') / service]
 
 
 def agent_units(service):
@@ -98,15 +99,15 @@ def update_lock(service):
     return pathlib.Path('/run/lock') / (service + '-update.lock')
 
 
-def clean_agent_fixture():
-    for service in AGENT_SERVICES:
+def clean_agent_fixture(services):
+    for service in services:
         for unit in agent_units(service):
             subprocess.run(['systemctl', 'stop', unit.name], capture_output=True)
             subprocess.run(['systemctl', 'disable', unit.name], capture_output=True)
             assert unit.resolve() == unit
             unit.unlink(missing_ok=True)
         for directory in agent_paths(service):
-            assert directory.resolve() == directory and directory.name == service
+            assert directory.resolve() == directory and directory.name in (service, 'nekopass')
             if directory.exists():
                 shutil.rmtree(directory)
         update_lock(service).unlink(missing_ok=True)
@@ -115,12 +116,35 @@ def clean_agent_fixture():
     run(['systemctl', 'daemon-reload'])
 
 
-def test_agent_uninstall(api, agent_installer, agent_binary, grpc_port, temporary):
+def clean_manager_host(cli):
+    if cli.exists() or any(path for parent in ('/etc', '/opt', '/var/lib')
+                           for path in pathlib.Path(parent).glob('nekopass*')):
+        return False
+    for action in ('list-units', 'list-unit-files'):
+        command = ['systemctl', action, '--no-legend', '--no-pager', 'nekopass*.service', 'nekopass*.path']
+        if action == 'list-units':
+            command.insert(2, '--all')
+        listing = subprocess.run(command, capture_output=True, timeout=10)
+        if listing.returncode or listing.stdout.strip():
+            return False
+    return True
+
+
+def assert_agent_removed(service):
+    for path in agent_paths(service) + agent_units(service):
+        assert not path.exists(), path
+    assert subprocess.run(['id', '-u', service], capture_output=True).returncode != 0
+    assert subprocess.run(['systemctl', 'is-active', '--quiet', service]).returncode != 0
+
+
+def test_agent_uninstall(api, agent_installer, agent_binary, grpc_port, temporary,
+                         cli, isolated_host, remove_panel):
     class QuietHandler(http.server.SimpleHTTPRequestHandler):
         def log_message(self, *_):
             pass
 
-    for service in AGENT_SERVICES:
+    services = (AGENT_SERVICES[0], 'nekopass-agent') if isolated_host else AGENT_SERVICES
+    for service in services:
         for path in agent_paths(service) + agent_units(service) + [update_lock(service)]:
             assert path.resolve() == path and not path.exists()
         assert subprocess.run(['id', '-u', service], capture_output=True).returncode != 0
@@ -154,7 +178,7 @@ def test_agent_uninstall(api, agent_installer, agent_binary, grpc_port, temporar
         agent_tokens = []
         try:
             installed_nodes = []
-            for i, service in enumerate(AGENT_SERVICES):
+            for i, service in enumerate(services):
                 node = api('/api/v1/admin/nodes', {'name': service, 'enabled': i != 0,
                                                   'udp_idle_timeout_seconds': 30}, 'POST')
                 installed_nodes.append(node['id'])
@@ -175,11 +199,12 @@ def test_agent_uninstall(api, agent_installer, agent_binary, grpc_port, temporar
                            for node in installed_nodes)
 
             wait_for(agents_ready, 'Native agents did not advertise automatic uninstall or finish syncing')
-            target, sibling = AGENT_SERVICES
+            target, sibling = services
             target_node, sibling_node = installed_nodes
             sibling_pid = subprocess.check_output(['systemctl', 'show', sibling, '-p', 'MainPID', '--value'])
             assert sibling_pid.strip() not in (b'', b'0')
             sibling_config = (agent_paths(sibling)[0] / 'agent.env').read_bytes()
+            shared_cli = cli.read_bytes()
             result = api('/api/v1/admin/nodes/' + str(target_node), method='DELETE')
             assert result['uninstall_state'] == 'queued'
 
@@ -190,25 +215,33 @@ def test_agent_uninstall(api, agent_installer, agent_binary, grpc_port, temporar
                 return node is None
 
             wait_for(uninstall_confirmed, 'Panel did not receive Native Agent uninstall confirmation')
-            for path in agent_paths(target) + agent_units(target):
-                assert not path.exists()
-            assert subprocess.run(['id', '-u', target], capture_output=True).returncode != 0
-            assert subprocess.run(['systemctl', 'is-active', '--quiet', target]).returncode != 0
+            assert_agent_removed(target)
+            assert cli.read_bytes() == shared_cli
+            assert read_nodes()[sibling_node]['online'] and api('/healthz')['status'] == 'ok'
+
+            remove_panel()
+            assert cli.read_bytes() == shared_cli
             for unit in (sibling, sibling + '-uninstall.path'):
                 run(['systemctl', 'is-active', '--quiet', unit])
             assert subprocess.check_output(['systemctl', 'show', sibling, '-p', 'MainPID', '--value']) == sibling_pid
             assert (agent_paths(sibling)[0] / 'agent.env').read_bytes() == sibling_config
-            assert read_nodes()[sibling_node]['online']
-            print('PASS panel-triggered native Agent uninstall, true result, other Agent remains running')
+
+            remaining_helper = agent_paths(sibling)[1] / 'bin/nekopass-agent-uninstall'
+            native_step('Native removal of the remaining Agent', [str(remaining_helper), '--service-name', sibling],
+                        secrets=agent_tokens, timeout=60)
+            assert_agent_removed(sibling)
+            if isolated_host:
+                assert not cli.exists(), 'Packaged manager remained after removing the final installation'
+            print('PASS native shared manager retention, panel and Agent uninstall, final cleanup')
         except Exception:
-            units = [service + suffix for service in AGENT_SERVICES
+            units = [service + suffix for service in services
                      for suffix in ('.service', '-uninstall.path', '-uninstall.service')]
             unit_diagnostics(units, agent_tokens, journal=True)
             raise
         finally:
             server.shutdown()
             thread.join()
-            clean_agent_fixture()
+            clean_agent_fixture(services)
 
 
 def main():
@@ -237,6 +270,7 @@ def main():
         grpc_port = free_port()
     cli = pathlib.Path('/usr/local/bin/nekopassctl')
     assert not cli.is_symlink()
+    isolated_host = clean_manager_host(cli)
     live_pid = subprocess.check_output(['systemctl', 'show', 'nekopass.service', '-p', 'MainPID', '--value'])
     with tempfile.TemporaryDirectory(prefix='nekopass-panel-fresh-e2e-', dir='/var/tmp') as temporary:
         backup = pathlib.Path(temporary) / 'original-cli'
@@ -361,17 +395,23 @@ def main():
             panel_bin = panel_base / 'bin'
             tls_dir = config_file.parent / 'tls'
             tls_dir.mkdir(mode=0o750, exist_ok=True)
-            retained_files = {
+            agent_artifacts = {
                 panel_bin / 'nekopass-agent': b'fixture Agent executable\n',
                 panel_bin / 'nekopass-agent-update-source.json': b'{}\n',
                 panel_state / 'state.db': b'fixture Agent state\n',
-                tls_dir / 'server.crt': b'fixture TLS certificate\n',
+                agent_config: agent_config.read_bytes(),
             }
+            panel_data = {
+                tls_dir / 'server.crt': b'fixture TLS certificate\n',
+                panel_state / 'runtime.fixture': b'fixture retained panel data\n',
+            }
+            retained_files = {**agent_artifacts, **panel_data}
             for path, contents in retained_files.items():
                 path.write_bytes(contents)
-            retained_files[agent_config] = agent_config.read_bytes()
             shared_updater = (panel_bin / 'nekopass-update').read_bytes()
             shared_cli = cli.read_bytes()
+            manager_copy = pathlib.Path(temporary) / 'nekopassctl'
+            shutil.copy2(cli, manager_copy)
             installed_config = config_file.read_bytes()
             admin_query = "SELECT id, md5(password_hash), is_admin FROM users WHERE username='fixture-admin'"
             retained_admin = sql(db_port, admin_query, SERVICE)
@@ -393,7 +433,7 @@ def main():
                 assert not (pathlib.Path('/etc/systemd/system') / unit).exists()
                 assert subprocess.run(['systemctl', 'is-active', '--quiet', unit]).returncode != 0
                 assert subprocess.run(['systemctl', 'is-enabled', '--quiet', unit]).returncode != 0
-            for path in (config_file, panel_bin / 'nekopass', panel_base / 'web', panel_dropins / 'update.conf'):
+            for path in (config_file, panel_bin / 'nekopass', panel_base / 'web', panel_dropins):
                 assert not path.exists()
             archives = list(config_file.parent.glob(archive_pattern))
             assert len(archives) == 1
@@ -409,7 +449,11 @@ def main():
             assert sql(db_port, admin_query, SERVICE) == retained_admin
             assert subprocess.check_output(['id', '-u', SERVICE], text=True) == service_uid
 
-            native_step('Repeated panel uninstall', uninstall_args + ['--yes'], secrets=test_passwords, timeout=30)
+            # Simulate an empty systemd drop-in directory left by an older uninstaller.
+            panel_dropins.mkdir()
+            native_step('Repeated panel uninstall', [str(manager_copy), SERVICE, 'uninstall', '--yes'],
+                        secrets=test_passwords, timeout=30)
+            assert not panel_dropins.exists()
             assert list(config_file.parent.glob(archive_pattern)) == archives
 
             # A normal install brings the panel back using the existing DB and credentials.
@@ -423,9 +467,35 @@ def main():
             assert sql(db_port, 'SELECT count(*) FROM users', SERVICE) == '1'
             assert sql(db_port, admin_query, SERVICE) == retained_admin
             assert archive.read_bytes() == installed_config
+
+            # Remove synthetic co-hosted Agent files before exercising a real separate Agent.
+            for path in agent_artifacts:
+                path.unlink()
+
+            def remove_panel():
+                config_before_removal = config_file.read_bytes()
+                native_step('Panel uninstall with no shared install directory', uninstall_args + ['--yes'],
+                            secrets=test_passwords, timeout=60)
+                for path in (panel_base, panel_bin, panel_dropins, config_file):
+                    assert not path.exists(), path
+                remaining_archives = set(config_file.parent.glob(archive_pattern))
+                assert archive in remaining_archives
+                newly_archived, = remaining_archives - {archive}
+                assert newly_archived.read_bytes() == config_before_removal
+                assert archive.read_bytes() == installed_config
+                assert stat.S_IMODE(newly_archived.stat().st_mode) == 0o600
+                for path, contents in panel_data.items():
+                    assert path.read_bytes() == contents
+                assert sql(db_port, owner_query) == SERVICE
+                assert sql(db_port, admin_query, SERVICE) == retained_admin
+
             if args.agent_installer:
-                test_agent_uninstall(api, args.agent_installer.resolve(), args.agent_binary.resolve(), grpc_port, temporary)
-                assert api('/healthz')['status'] == 'ok'
+                test_agent_uninstall(api, args.agent_installer.resolve(), args.agent_binary.resolve(), grpc_port,
+                                     temporary, cli, isolated_host, remove_panel)
+            else:
+                remove_panel()
+                if isolated_host:
+                    assert not cli.exists(), 'Packaged manager remained after removing the last panel'
             assert subprocess.check_output(['systemctl', 'show', 'nekopass.service', '-p', 'MainPID', '--value']) == live_pid
             print('PASS native install, database reset, scoped uninstall, and reinstall with preserved data and Agent files')
         except Exception:

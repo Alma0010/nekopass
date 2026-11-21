@@ -154,17 +154,46 @@ async function showStats(r?: Rule) { await action(async () => { stats.value = aw
 
 <template>
   <section class="rules-panel surface">
-    <div class="rules-titlebar"><strong>{{ managedUser ? managedUser.username + ' 的转发规则' : '我的转发规则' }}</strong><el-button @click="searching = !searching"><Icon name="search" />搜索规则</el-button><el-button :loading="busy" @click="action(refresh)"><Icon name="refresh" />刷新</el-button><el-button @click="showStats()"><Icon name="stats" />统计数据</el-button></div>
-    <div class="rules-content">
+    <div class="rules-titlebar section-header">
+      <strong>{{ managedUser ? managedUser.username + ' 的转发规则' : '我的转发规则' }}</strong>
+      <div class="admin-actions layout-actions">
+        <el-button @click="searching = !searching"><Icon name="search" />搜索规则</el-button>
+        <el-button :loading="busy" @click="action(refresh)"><Icon name="refresh" />刷新</el-button>
+        <el-button @click="showStats()"><Icon name="stats" />统计数据</el-button>
+      </div>
+    </div>
+    <div class="rules-content section-body layout-stack">
       <el-input v-if="searching" v-model="query" class="rule-search" placeholder="搜索名称、入口、端口、目标或用户" clearable autofocus />
-      <div class="rules-meta"><span class="meta-chip">流量: {{ bytes(totalUsed) }} / {{ policy?.plan_id ? quotaText(totalQuota) : '未分配套餐' }}</span><span class="meta-chip">到期: {{ !policy?.plan_id ? '未分配套餐' : policy.expires_at ? new Date(policy.expires_at).toLocaleString() : '永不到期' }}</span><span class="meta-chip">规则数: {{ ownRules.length }} / {{ policy?.plan_id ? limitText(maxRules) : '—' }}</span><el-button class="group-manage" @click="groupForm.user_id = actorID; groupDialog = true"><Icon name="folder" />管理分组</el-button><button class="group-tab" :class="{ active: group === -1 }" @click="group = -1">全部</button><button class="group-tab" :class="{ active: group === 0 }" @click="group = 0">未分组 ({{ ownRules.filter(r => !r.group_id).length }})</button><button v-for="g in ownGroups" :key="g.id" class="group-tab" :class="{ active: group === g.id }" @click="group = g.id">{{ g.name }} ({{ ownRules.filter(r => r.group_id === g.id).length }})</button></div>
-      <div class="rule-toolbar"><el-button @click="edit()"><Icon name="add" />添加规则</el-button><el-button @click="showImport"><Icon name="upload" />批量导入</el-button><el-button @click="showExport"><Icon name="download" />批量导出</el-button><el-button :disabled="busy || !selected.length" @click="showBatchEdit"><Icon name="edit" />批量编辑</el-button><el-button :disabled="busy || !selected.length" @click="batch('disable')"><Icon name="pause" />暂停选中</el-button><el-button :disabled="busy || !selected.length" @click="batch('enable')"><Icon name="play" />恢复选中</el-button><el-button @click="batch('clear')"><Icon name="clear" />清空流量</el-button><el-button @click="batch('delete')"><Icon name="delete" />删除选中</el-button><span v-if="selected.length" class="selection-note">已选择 {{ selected.length }} 条</span></div>
-      <el-table ref="ruleTable" :data="paged" row-key="id" @selection-change="selected = $event" @sort-change="sortChanged" @filter-change="filterChanged" empty-text="暂无转发规则，点击「添加规则」开始。" class="rules-table"><el-table-column type="selection" width="40" :reserve-selection="true" /><el-table-column prop="name" label="规则名" min-width="210" sortable="custom"><template #default="{ row }"><span>{{ row.name }} <small>(#{{ row.id }})</small></span><div v-if="me.is_admin && !owner" class="subtle small">{{ row.username }}</div></template></el-table-column><el-table-column prop="protocol" label="协议" width="90"><template #default="{ row }">{{ row.protocol==='udp'?'UDP':(row.tls_inbound_id||row.tls_inbound_port)?'TCP / TLS':'TCP' }}</template></el-table-column><el-table-column prop="node_name" label="入口" min-width="210" sortable="custom"><template #default="{ row }"><div>入口: {{ row.node_name }} <span class="entry-badge">{{ row.egress_group_id?'出口组: '+row.egress_group_name:row.egress_node_id ? '出口: '+row.egress_node_name : '直转' }}</span></div><div v-if="row.ingress_group_id" class="subtle small">节点组 · {{row.ingress_nodes?.length||0}} 个入口</div><button class="address-link" style="white-space:pre-line;text-align:left" @click="copyAddress(row)" :title="row.ingress_group_id || row.public_address ? '复制入口地址' : '节点尚未配置公网地址'">{{ nodeAddress(row) }}</button><div v-if="row.tls_inbound_id||row.tls_inbound_port" class="subtle small">SNI: {{ (row.sni_names||[]).join(', ') }}</div></template></el-table-column><el-table-column label="出口" min-width="190"><template #default="{ row }"><div v-for="target in row.targets" :key="target">{{ target }}</div></template></el-table-column><el-table-column prop="traffic_bytes" label="已用流量" width="130" sortable="custom"><template #default="{ row }">{{ bytes(row.traffic_bytes) }}</template></el-table-column><el-table-column prop="status" column-key="status" :filtered-value="statusFilter" label="状态" width="115" :filters="Object.entries(statusText).map(([value, text]) => ({ value, text }))" :filter-method="() => true"><template #default="{ row }"><span :class="['rule-status', row.status]">{{ statusText[row.status] || row.status }}</span></template></el-table-column><el-table-column fixed="right" class-name="table-actions" label="操作" width="246"><template #default="{ row }"><div class="row-actions"><el-button :aria-label="row.enabled ? '暂停规则' : '恢复规则'" :title="row.enabled ? '暂停' : '恢复'" @click="batch(row.enabled ? 'disable' : 'enable', [row.id])"><Icon :name="row.enabled ? 'pause' : 'play'" /></el-button><el-button title="规则详情" aria-label="规则详情" @click="details = row"><Icon name="help" /></el-button><el-button title="复制规则" aria-label="复制规则" @click="edit(row, true)"><Icon name="copy" /></el-button><el-button title="编辑规则" aria-label="编辑规则" @click="edit(row)"><Icon name="edit" /></el-button><el-button title="重命名" aria-label="重命名" @click="rename(row)"><Icon name="rename" /></el-button><el-button title="删除规则" aria-label="删除规则" @click="batch('delete', [row.id])"><Icon name="delete" /></el-button></div></template></el-table-column></el-table>
-      <div class="rules-pagination"><span class="subtle">共 {{ filtered.length }} 条规则</span><el-pagination v-model:current-page="page" v-model:page-size="rowsPerPage" :page-sizes="[20, 50, 100]" :total="filtered.length" layout="sizes, prev, pager, next" /></div>
+      <div class="rules-meta layout-toolbar">
+        <div class="layout-toolbar rules-usage">
+          <span class="meta-chip">流量: {{ bytes(totalUsed) }} / {{ policy?.plan_id ? quotaText(totalQuota) : '未分配套餐' }}</span>
+          <span class="meta-chip">到期: {{ !policy?.plan_id ? '未分配套餐' : policy.expires_at ? new Date(policy.expires_at).toLocaleString() : '永不到期' }}</span>
+          <span class="meta-chip">规则数: {{ ownRules.length }} / {{ policy?.plan_id ? limitText(maxRules) : '—' }}</span>
+        </div>
+        <div class="layout-actions rule-group-tabs">
+          <el-button class="group-manage" @click="groupForm.user_id = actorID; groupDialog = true"><Icon name="folder" />管理分组</el-button>
+          <button class="group-tab" :class="{ active: group === -1 }" @click="group = -1">全部</button>
+          <button class="group-tab" :class="{ active: group === 0 }" @click="group = 0">未分组 ({{ ownRules.filter(r => !r.group_id).length }})</button>
+          <button v-for="g in ownGroups" :key="g.id" class="group-tab" :class="{ active: group === g.id }" @click="group = g.id">{{ g.name }} ({{ ownRules.filter(r => r.group_id === g.id).length }})</button>
+        </div>
+      </div>
+      <div class="rule-toolbar layout-actions">
+        <el-button type="primary" @click="edit()"><Icon name="add" />添加规则</el-button>
+        <el-button @click="showImport"><Icon name="upload" />批量导入</el-button>
+        <el-button @click="showExport"><Icon name="download" />批量导出</el-button>
+        <el-button :disabled="busy || !selected.length" @click="showBatchEdit"><Icon name="edit" />批量编辑</el-button>
+        <el-button :disabled="busy || !selected.length" @click="batch('disable')"><Icon name="pause" />暂停选中</el-button>
+        <el-button :disabled="busy || !selected.length" @click="batch('enable')"><Icon name="play" />恢复选中</el-button>
+        <el-button @click="batch('clear')"><Icon name="clear" />清空流量</el-button>
+        <el-button @click="batch('delete')"><Icon name="delete" />删除选中</el-button>
+        <span v-if="selected.length" class="selection-note">已选择 {{ selected.length }} 条</span>
+      </div>
+      <el-table ref="ruleTable" :data="paged" row-key="id" @selection-change="selected = $event" @sort-change="sortChanged" @filter-change="filterChanged" empty-text="暂无转发规则，点击「添加规则」开始。" class="rules-table resource-table"><el-table-column type="selection" width="40" :reserve-selection="true" /><el-table-column prop="name" label="规则名" min-width="210" sortable="custom"><template #default="{ row }"><span>{{ row.name }} <small>(#{{ row.id }})</small></span><div v-if="me.is_admin && !owner" class="subtle small">{{ row.username }}</div></template></el-table-column><el-table-column prop="protocol" label="协议" width="90"><template #default="{ row }">{{ row.protocol==='udp'?'UDP':(row.tls_inbound_id||row.tls_inbound_port)?'TCP / TLS':'TCP' }}</template></el-table-column><el-table-column prop="node_name" label="入口" min-width="210" sortable="custom"><template #default="{ row }"><div>入口: {{ row.node_name }} <span class="entry-badge">{{ row.egress_group_id?'出口组: '+row.egress_group_name:row.egress_node_id ? '出口: '+row.egress_node_name : '直转' }}</span></div><div v-if="row.ingress_group_id" class="subtle small">节点组 · {{row.ingress_nodes?.length||0}} 个入口</div><button class="address-link" style="white-space:pre-line;text-align:left" @click="copyAddress(row)" :title="row.ingress_group_id || row.public_address ? '复制入口地址' : '节点尚未配置公网地址'">{{ nodeAddress(row) }}</button><div v-if="row.tls_inbound_id||row.tls_inbound_port" class="subtle small">SNI: {{ (row.sni_names||[]).join(', ') }}</div></template></el-table-column><el-table-column label="出口" min-width="190"><template #default="{ row }"><div v-for="target in row.targets" :key="target">{{ target }}</div></template></el-table-column><el-table-column prop="traffic_bytes" label="已用流量" width="130" sortable="custom"><template #default="{ row }">{{ bytes(row.traffic_bytes) }}</template></el-table-column><el-table-column prop="status" column-key="status" :filtered-value="statusFilter" label="状态" width="115" :filters="Object.entries(statusText).map(([value, text]) => ({ value, text }))" :filter-method="() => true"><template #default="{ row }"><span :class="['rule-status', row.status]">{{ statusText[row.status] || row.status }}</span></template></el-table-column><el-table-column fixed="right" class-name="table-actions" label="操作" width="246"><template #default="{ row }"><div class="row-actions layout-actions"><el-button :aria-label="row.enabled ? '暂停规则' : '恢复规则'" :title="row.enabled ? '暂停' : '恢复'" @click="batch(row.enabled ? 'disable' : 'enable', [row.id])"><Icon :name="row.enabled ? 'pause' : 'play'" /></el-button><el-button title="规则详情" aria-label="规则详情" @click="details = row"><Icon name="help" /></el-button><el-button title="复制规则" aria-label="复制规则" @click="edit(row, true)"><Icon name="copy" /></el-button><el-button title="编辑规则" aria-label="编辑规则" @click="edit(row)"><Icon name="edit" /></el-button><el-button title="重命名" aria-label="重命名" @click="rename(row)"><Icon name="rename" /></el-button><el-button title="删除规则" aria-label="删除规则" @click="batch('delete', [row.id])"><Icon name="delete" /></el-button></div></template></el-table-column></el-table>
+      <div class="rules-pagination layout-toolbar"><span class="subtle">共 {{ filtered.length }} 条规则</span><el-pagination v-model:current-page="page" v-model:page-size="rowsPerPage" :page-sizes="[20, 50, 100]" :total="filtered.length" layout="sizes, prev, pager, next" /></div>
     </div>
   </section>
   <div class="rule-dock" aria-label="规则快捷操作"><button @click="showBatchEdit"><Icon name="edit" />编辑</button><button @click="showBatchGroup()"><Icon name="folder" />分组</button><button @click="edit()"><Icon name="add" />单条</button><button @click="showImport"><Icon name="upload" />批量</button><button @click="showExport"><Icon name="download" />导出</button><button @click="batch('clear')"><Icon name="clear" />流量</button><button @click="batch('disable')"><Icon name="pause" />暂停</button><button @click="batch('enable')"><Icon name="play" />恢复</button><button @click="batch('delete')"><Icon name="delete" />删除</button></div>
-  <el-dialog v-model="ruleDialog" :title="editID ? '编辑规则' : '添加规则'" width="416px" top="4vh" class="rule-form-dialog"><el-form label-position="top" @submit.prevent="save"><el-form-item label="转发类型"><el-select v-model="form.protocol"><el-option label="TCP" value="tcp"/><el-option label="UDP" value="udp" :disabled="!udpSelectionAllowed"/></el-select></el-form-item><el-form-item label="名称"><el-input v-model="form.name" maxlength="128" /></el-form-item><el-form-item label="入口类型"><el-radio-group :model-value="ingressMode" @update:model-value="selectIngressMode($event as 'group'|'node')"><el-radio-button value="group">节点组</el-radio-button><el-radio-button value="node">单节点</el-radio-button></el-radio-group></el-form-item>
+  <el-dialog v-model="ruleDialog" :title="editID ? '编辑规则' : '添加规则'" width="416px" top="4vh" class="rule-form-dialog managed-form-dialog"><el-form label-position="top" @submit.prevent="save"><el-form-item label="转发类型"><el-select v-model="form.protocol"><el-option label="TCP" value="tcp"/><el-option label="UDP" value="udp" :disabled="!udpSelectionAllowed"/></el-select></el-form-item><el-form-item label="名称"><el-input v-model="form.name" maxlength="128" /></el-form-item><el-form-item label="入口类型"><el-radio-group :model-value="ingressMode" @update:model-value="selectIngressMode($event as 'group'|'node')"><el-radio-button value="group">节点组</el-radio-button><el-radio-button value="node">单节点</el-radio-button></el-radio-group></el-form-item>
 <el-form-item v-if="ingressMode==='group'" label="入口节点组"><el-select :model-value="form.ingress_group_id||undefined" @update:model-value="selectIngressGroup($event)" placeholder="请选择入口节点组"><el-option v-for="g in nodeGroups" :key="g.id" :label="g.name+' · '+g.node_ids.length+' 个入口'" :value="g.id" :disabled="!g.node_ids.length||(form.protocol==='udp'&&g.members.some(n=>!udpIngressAllowed(n.id)))"/></el-select><span class="field-tip">同组入口使用相同端口，计为一条规则；组内增减节点后自动同步。</span></el-form-item>
 <el-form-item v-else label="入口"><el-select :model-value="form.node_id||undefined" @update:model-value="selectIngress($event)" placeholder="请选择入口节点"><el-option v-for="n in eligibleNodes" :key="n.id" :label="n.name+(form.protocol==='udp'&&!udpIngressAllowed(n.id)?'（禁止新增 UDP 入站）':'')" :value="n.id" :disabled="form.protocol==='udp'&&!udpIngressAllowed(n.id)"/></el-select></el-form-item>
 <el-form-item label="出口"><EgressSelect v-model="selectedEgress" :options="exitChoices" :disabled="!ingressMembers.length" placeholder="请选择出口"/><span v-if="ingressMembers.length&&!exitChoices.length" class="field-tip">请联系管理员配置每个入口都可用的出口或出口节点组。</span></el-form-item>
@@ -173,29 +202,33 @@ async function showStats(r?: Rule) { await action(async () => { stats.value = aw
 <el-form-item v-else label="监听端口"><el-input :model-value="form.listen_port || ''" @update:model-value="form.listen_port = Number($event) || 0" placeholder="留空则随机" type="number" :min="0" :max="65535" /><span class="field-tip">0 或留空自动分配（{{ commonPortMin }}–{{ commonPortMax }}）</span></el-form-item><el-form-item label="目标地址"><el-input v-model="targetText" type="textarea" :rows="5" placeholder="一行一个，空行会被忽略，格式如下：&#10;&#10;1.2.3.4:5678&#10;[2001::]:80&#10;example.com:443" /></el-form-item><el-collapse v-model="advanced" class="advanced-options"><el-collapse-item title="高级选项" name="advanced"><el-form-item label="负载均衡策略"><el-select v-model="form.balance"><el-option label="随机" value="random" /><el-option label="轮询" value="round_robin" /><el-option label="最少连接" value="least_connections" /></el-select></el-form-item><el-form-item v-if="form.protocol==='tcp'&&inboundMode!=='tls'" label="接受 Proxy Protocol"><el-select v-model="proxyAcceptEnabled"><el-option label="关闭" :value="false" /><el-option label="开启" :value="true" /></el-select></el-form-item><p class="field-tip">PROXY Protocol 信任来源由管理员统一配置。</p><el-form-item v-if="form.protocol==='tcp'" label="发送 Proxy Protocol"><el-select v-model="proxySendEnabled"><el-option label="关闭" :value="false" /><el-option label="开启" :value="true" /></el-select></el-form-item>
 <template v-if="form.protocol==='tcp'&&inboundMode!=='tls'&&form.origin_tls"><el-form-item label="回源 TLS"><el-switch v-model="form.origin_tls.enabled"/></el-form-item><template v-if="form.origin_tls.enabled"><el-form-item label="回源 SNI"><el-input v-model="form.origin_tls.server_name" placeholder="留空使用目标地址域名"/></el-form-item><el-form-item label="回源 CA"><el-input v-model="form.origin_tls.root_ca" type="textarea" :rows="3" placeholder="留空使用系统信任的公开 CA"/></el-form-item><el-form-item label="回源 ALPN"><el-input v-model="originALPN" placeholder="留空沿用入站协商的协议"/></el-form-item></template></template>
 <div class="field-tip">资源限制初始来自套餐「{{ policy?.plan_name || '未分配' }}」，个人设置由管理员调整。规则限速 {{ policy?.rule_speed_mbps ? policy.rule_speed_mbps + ' Mbps' : '不额外限制' }}，IP 上限 {{ policy?.rule_ip_limit || '不限' }}，连接数上限 {{ policy?.rule_connection_limit || '不限' }}。</div><el-form-item label="分组"><el-select v-model="form.group_id"><el-option label="未分组" :value="0" /><el-option v-for="g in groups.filter(g => g.user_id === form.user_id)" :key="g.id" :label="g.name" :value="g.id" /></el-select></el-form-item></el-collapse-item></el-collapse></el-form><template #footer><el-button @click="ruleDialog = false">取消</el-button><el-button type="primary" :loading="busy" @click="save">确定</el-button></template></el-dialog>
-  <el-dialog v-model="groupDialog" title="管理分组" width="540px"><el-form :inline="true"><el-form-item><el-input v-model="groupForm.name" placeholder="分组名称" maxlength="64" /></el-form-item><el-button type="primary" :loading="busy" @click="addGroup">添加</el-button></el-form><el-table :data="groups.filter(g => g.user_id === actorID)"><el-table-column prop="name" label="名称" /><el-table-column prop="rule_count" label="规则数" width="90" /><el-table-column fixed="right" class-name="table-actions" label="操作" width="120"><template #default="{ row }"><el-button link @click="renameGroup(row)">编辑</el-button><el-button link type="danger" @click="deleteGroup(row)">删除</el-button></template></el-table-column></el-table></el-dialog>
-  <el-dialog v-model="importDialog" title="批量导入规则" width="620px">
-    <p class="subtle">支持 nyanpass 逐行 JSON 和 Nekopass 完整备份。最多 500 条；失败时整批回滚。</p>
-    <input type="file" accept="application/json,application/x-ndjson,text/plain,.json,.jsonl,.ndjson,.txt" @change="fileImport" />
-    <el-input v-model="importText" type="textarea" :rows="8" placeholder='{"dest":["example.com:443"],"listen_port":9122,"name":"示例","proxy_protocol":3}' class="import-text" />
-    <p v-if="importPreview.data" class="subtle">已识别 {{ importPreview.data.format === 'nyanpass' ? 'nyanpass' : 'Nekopass' }} 格式，共 {{ importPreview.data.rules.length }} 条。</p>
-    <p v-else-if="importText.trim()" class="field-tip">{{ importPreview.error }}</p>
-    <p v-if="importPreview.data?.format === 'nyanpass' && importPreview.data.rules.some(r => r.proxy_protocol === 2)" class="field-tip">发送 v2 TCP+UDP 将按 v2 TCP 导入，该导入格式未提供转发类型，仍按 TCP 导入；UDP 请使用 Nekopass 完整备份。</p>
-    <el-form v-if="importPreview.data?.format === 'nyanpass'" label-position="top">
-      <el-form-item label="入口类型"><el-radio-group :model-value="importMode" @update:model-value="selectImportMode($event as 'group'|'node')"><el-radio-button value="group">节点组</el-radio-button><el-radio-button value="node">单节点</el-radio-button></el-radio-group></el-form-item>
-      <el-form-item v-if="importMode==='group'" label="入口节点组"><el-select :model-value="importIngressGroupID||undefined" @update:model-value="selectImportGroup($event)" placeholder="请选择入口节点组"><el-option v-for="g in nodeGroups" :key="g.id" :label="g.name+' · '+g.node_ids.length+' 个入口'" :value="g.id" :disabled="!g.node_ids.length||(form.protocol==='udp'&&g.members.some(n=>!udpIngressAllowed(n.id)))"/></el-select></el-form-item>
-      <el-form-item v-else label="入口"><el-select :model-value="importNodeID || undefined" @update:model-value="selectImportIngress($event)" placeholder="请选择入口节点"><el-option v-for="n in importIngressNodes" :key="n.id" :label="n.name" :value="n.id" /></el-select></el-form-item>
-      <el-form-item label="出口"><EgressSelect v-model="importEgress" :options="importExitChoices" :disabled="!importMembers.length" placeholder="请选择出口"/></el-form-item>
-      <el-form-item label="分组"><el-select v-model="importGroupID"><el-option label="未分组" :value="0" /><el-option v-for="g in ownGroups" :key="g.id" :label="g.name" :value="g.id" /></el-select></el-form-item>
-      <p class="field-tip">PROXY Protocol 信任来源由管理员统一配置。</p>
-      <el-checkbox v-model="importRandomPorts">重新随机分配监听端口</el-checkbox>
-    </el-form>
+  <el-dialog v-model="groupDialog" title="管理分组" width="540px" class="managed-form-dialog"><div class="layout-stack"><el-form class="rules-group-form layout-toolbar" :inline="true"><el-form-item><el-input v-model="groupForm.name" placeholder="分组名称" maxlength="64" /></el-form-item><el-button type="primary" :loading="busy" @click="addGroup">添加</el-button></el-form><el-table :data="groups.filter(g => g.user_id === actorID)"><el-table-column prop="name" label="名称" /><el-table-column prop="rule_count" label="规则数" width="90" /><el-table-column fixed="right" class-name="table-actions" label="操作" width="120"><template #default="{ row }"><el-button link @click="renameGroup(row)">编辑</el-button><el-button link type="danger" @click="deleteGroup(row)">删除</el-button></template></el-table-column></el-table></div></el-dialog>
+  <el-dialog v-model="importDialog" title="批量导入规则" width="620px" class="managed-form-dialog">
+    <div class="layout-stack rule-dialog-stack">
+      <p class="subtle">支持 nyanpass 逐行 JSON 和 Nekopass 完整备份。最多 500 条；失败时整批回滚。</p>
+      <input type="file" accept="application/json,application/x-ndjson,text/plain,.json,.jsonl,.ndjson,.txt" @change="fileImport" />
+      <el-input v-model="importText" type="textarea" :rows="8" placeholder='{"dest":["example.com:443"],"listen_port":9122,"name":"示例","proxy_protocol":3}' class="import-text" />
+      <p v-if="importPreview.data" class="subtle">已识别 {{ importPreview.data.format === 'nyanpass' ? 'nyanpass' : 'Nekopass' }} 格式，共 {{ importPreview.data.rules.length }} 条。</p>
+      <p v-else-if="importText.trim()" class="field-tip">{{ importPreview.error }}</p>
+      <p v-if="importPreview.data?.format === 'nyanpass' && importPreview.data.rules.some(r => r.proxy_protocol === 2)" class="field-tip">发送 v2 TCP+UDP 将按 v2 TCP 导入，该导入格式未提供转发类型，仍按 TCP 导入；UDP 请使用 Nekopass 完整备份。</p>
+      <el-form v-if="importPreview.data?.format === 'nyanpass'" label-position="top">
+        <el-form-item label="入口类型"><el-radio-group :model-value="importMode" @update:model-value="selectImportMode($event as 'group'|'node')"><el-radio-button value="group">节点组</el-radio-button><el-radio-button value="node">单节点</el-radio-button></el-radio-group></el-form-item>
+        <el-form-item v-if="importMode==='group'" label="入口节点组"><el-select :model-value="importIngressGroupID||undefined" @update:model-value="selectImportGroup($event)" placeholder="请选择入口节点组"><el-option v-for="g in nodeGroups" :key="g.id" :label="g.name+' · '+g.node_ids.length+' 个入口'" :value="g.id" :disabled="!g.node_ids.length||(form.protocol==='udp'&&g.members.some(n=>!udpIngressAllowed(n.id)))"/></el-select></el-form-item>
+        <el-form-item v-else label="入口"><el-select :model-value="importNodeID || undefined" @update:model-value="selectImportIngress($event)" placeholder="请选择入口节点"><el-option v-for="n in importIngressNodes" :key="n.id" :label="n.name" :value="n.id" /></el-select></el-form-item>
+        <el-form-item label="出口"><EgressSelect v-model="importEgress" :options="importExitChoices" :disabled="!importMembers.length" placeholder="请选择出口"/></el-form-item>
+        <el-form-item label="分组"><el-select v-model="importGroupID"><el-option label="未分组" :value="0" /><el-option v-for="g in ownGroups" :key="g.id" :label="g.name" :value="g.id" /></el-select></el-form-item>
+        <p class="field-tip">PROXY Protocol 信任来源由管理员统一配置。</p>
+        <el-checkbox v-model="importRandomPorts">重新随机分配监听端口</el-checkbox>
+      </el-form>
+    </div>
     <template #footer><el-button @click="importDialog = false">取消</el-button><el-button type="primary" :loading="busy" :disabled="!importPreview.data" @click="doImport">导入</el-button></template>
   </el-dialog>
-  <el-dialog v-model="exportDialog" title="批量导出规则" width="520px">
-    <p>导出 {{ exportRows.length }} 条规则。</p>
-    <el-radio-group v-model="exportFormat"><el-radio value="nyanpass">nyanpass 兼容格式</el-radio><el-radio value="nekopass">Nekopass 完整备份</el-radio></el-radio-group>
-    <p class="subtle">{{ exportFormat === 'nyanpass' ? '一行一个 JSON，包含目标、监听端口、名称、目标策略和 Proxy Protocol 开关；入口、出口、分组、启停及接收版本限制不包含在内。' : '保留入口、出口、分组、启停状态及高级选项。' }}</p>
+  <el-dialog v-model="exportDialog" title="批量导出规则" width="520px" class="managed-form-dialog">
+    <div class="layout-stack rule-dialog-stack">
+      <p>导出 {{ exportRows.length }} 条规则。</p>
+      <el-radio-group v-model="exportFormat"><el-radio value="nyanpass">nyanpass 兼容格式</el-radio><el-radio value="nekopass">Nekopass 完整备份</el-radio></el-radio-group>
+      <p class="subtle">{{ exportFormat === 'nyanpass' ? '一行一个 JSON，包含目标、监听端口、名称、目标策略和 Proxy Protocol 开关；入口、出口、分组、启停及接收版本限制不包含在内。' : '保留入口、出口、分组、启停状态及高级选项。' }}</p>
+    </div>
     <template #footer><el-button @click="exportDialog = false">取消</el-button><el-button :loading="busy" @click="copyExport">复制到剪贴板</el-button><el-button type="primary" :loading="busy" @click="exportRules">导出</el-button></template>
   </el-dialog>
   <RuleBatchDialog v-model="batchEditDialog" :rules="batchEditRows" :nodes="importAuthorizedNodes" :node-groups="nodeGroups" :egress-groups="egressGroups" :busy="busy" :limits-label="`规则资源限制跟随个人设置：限速 ${policy?.rule_speed_mbps ? policy.rule_speed_mbps+' Mbps' : '不限'}，IP 上限 ${policy?.rule_ip_limit||'不限'}，连接数上限 ${policy?.rule_connection_limit||'不限'}。`" @save="saveBatchEdit" @toggle="toggleBatchEdit"/>
@@ -203,3 +236,42 @@ async function showStats(r?: Rule) { await action(async () => { stats.value = aw
   <el-dialog :model-value="!!details" title="规则详情" width="560px" @close="details = null"><template v-if="details"><el-descriptions :column="1" border><el-descriptions-item label="名称">{{ details.name }}</el-descriptions-item><el-descriptions-item label="入口">{{ nodeAddress(details) }}</el-descriptions-item><el-descriptions-item v-if="details.tls_inbound_id||details.tls_inbound_port" label="SNI">{{details.sni_names?.join(', ')}}</el-descriptions-item><el-descriptions-item label="出口">{{ details.egress_group_id?'节点组 · '+details.egress_group_name:details.egress_node_id ? details.egress_node_name+' · '+protocolText(details.egress_tunnel_protocol) : '#0 直转' }}</el-descriptions-item><el-descriptions-item label="目标">{{ details.targets.join(', ') }}</el-descriptions-item><el-descriptions-item label="状态">{{ statusText[details.status] }}</el-descriptions-item><el-descriptions-item v-if="details.ingress_group_id" label="组内入口"><div v-for="entry in details.ingress_nodes" :key="entry.node_id">{{entry.name}} · {{statusText[entry.status]||entry.status}}<span v-if="entry.sync_error"> · {{entry.sync_error}}</span></div></el-descriptions-item><el-descriptions-item label="同步反馈">{{ details.sync_error || '无错误' }}</el-descriptions-item><el-descriptions-item label="规则限速">{{ details.speed_mbps || '不限' }} {{ details.speed_mbps ? 'Mbps' : '' }}</el-descriptions-item><el-descriptions-item label="IP / 连接数限制">{{ details.ip_limit || '不限' }} / {{ details.connection_limit || '不限' }}</el-descriptions-item><el-descriptions-item label="已用流量">{{ bytes(details.traffic_bytes) }}</el-descriptions-item></el-descriptions><el-button class="detail-stats" @click="showStats(details!)"><Icon name="stats" />查看统计数据</el-button></template></el-dialog>
   <el-dialog v-model="statsDialog" :title="statTitle" width="680px"><p>合计 {{ bytes(statTotal) }}</p><svg class="traffic-chart" viewBox="0 0 620 210" role="img" :aria-label="statTitle"><path d="M25 15V170H610" fill="none" stroke="currentColor" opacity=".25" /><g v-for="(bar, i) in chart" :key="i"><rect :x="bar.x" :y="170 - bar.height" width="15" :height="Math.max(1, bar.height)" rx="2" fill="currentColor"><title>{{ bar.time.toLocaleString() }} · {{ bytes(bar.value) }}</title></rect><text v-if="i % 4 === 0" :x="bar.x" y="193" font-size="10" fill="currentColor">{{ bar.time.getHours() }}:00</text></g></svg><p class="subtle">按小时汇总实际转发字节。开始采集后才有历史数据；清空规则展示流量不会删除历史记录。</p></el-dialog>
 </template>
+
+<style scoped>
+.rules-titlebar strong {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.rule-group-tabs,
+.rules-usage {
+  min-width: 0;
+}
+
+.group-tab {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.rules-group-form :deep(.el-form-item) {
+  flex: 1 1 180px;
+  margin: 0;
+  min-width: 0;
+}
+
+.rule-dialog-stack > :is(p, .import-text) {
+  margin: 0;
+}
+
+@media (max-width: 700px) {
+  .resource-table :deep(.el-table__cell.el-table-fixed-column--right) {
+    position: static !important;
+    border-left: 0;
+  }
+
+  .resource-table :deep(.el-table__cell.el-table-fixed-column--right::before) {
+    display: none;
+  }
+}
+</style>

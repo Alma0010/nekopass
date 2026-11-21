@@ -1,5 +1,6 @@
 """Run the real uninstaller against a temporary filesystem and mocked systemd/accounts."""
 import contextlib
+import fnmatch
 import io
 import os
 import pathlib
@@ -25,8 +26,11 @@ class UninstallerTests(unittest.TestCase):
         self.module.ROOT = self.root
         self.calls = []
         self.services = set()
+        self.running_units = set()
+        self.external_units = set()
         for directory in ['run/systemd/system', 'run/lock', 'etc/systemd/system', 'opt', 'var/lib', 'usr/local/bin']:
             (self.root / directory).mkdir(parents=True, exist_ok=True)
+        self.write_mountinfo()
         fakepwd = types.ModuleType('pwd')
         fakepwd.getpwnam = lambda name: (_ for _ in ()).throw(KeyError(name))
         fakepwd.getpwall = lambda: []
@@ -46,17 +50,33 @@ class UninstallerTests(unittest.TestCase):
         self.stack.enter_context(patch.object(self.module.os, 'geteuid', return_value=0, create=True))
         self.stack.enter_context(patch.object(self.module.shutil, 'which', return_value='/bin/systemctl'))
         self.stack.enter_context(patch.object(self.module, 'command', side_effect=self.command))
+        self.stack.enter_context(patch.object(self.module.subprocess, 'run', side_effect=lambda args, **_: self.command(*args)))
 
     def command(self, *args, check=True):
         self.calls.append(args)
         output = ''
-        if args[:2] == ('systemctl', 'list-unit-files'):
-            output = ''.join(service + '.service enabled\n' for service in sorted(self.services))
+        if args[:2] in (('systemctl', 'list-unit-files'), ('systemctl', 'list-units')):
+            if args[1] == 'list-unit-files':
+                userspace = {item.name for item in (self.root / 'etc/systemd/system').iterdir()
+                             if item.name.endswith(('.service', '.path'))}
+                units = userspace | self.external_units
+                state = 'enabled'
+            else:
+                units = self.running_units
+                state = 'loaded active running fixture'
+            patterns = [arg for arg in args[2:] if arg.startswith('nekopass')]
+            output = ''.join(f'{unit} {state}\n' for unit in sorted(units)
+                             if not patterns or any(fnmatch.fnmatchcase(unit, pattern) for pattern in patterns))
+        elif args[:2] == ('systemctl', 'stop'):
+            self.running_units.discard(args[2])
         elif args[:2] == ('systemctl', 'show'):
             unit = args[2]
             matching = next((service for service in self.services if unit in self.module.unit_names(service)), None)
             if args[4] == 'LoadState':
-                output = 'loaded' if matching else 'not-found'
+                installed = (self.root / 'etc/systemd/system' / unit).exists() or unit in self.external_units
+                output = 'loaded' if installed or unit in self.running_units else 'not-found'
+            elif args[4] == 'ActiveState':
+                output = 'active' if unit in self.running_units else 'inactive'
             elif matching:
                 base = '/opt/nekopass' if matching == 'nekopass-agent' else '/opt/' + matching
                 binaries = {matching + '.service': 'nekopass-agent', matching + '-uninstall.service': 'nekopass-agent-uninstall'}
@@ -66,11 +86,20 @@ class UninstallerTests(unittest.TestCase):
     def put(self, name, content='fixture'):
         target = self.root / name.lstrip('/')
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding='utf-8')
+        target.write_text(content, encoding='utf-8', newline='\n')
         return target
+
+    def write_mountinfo(self, *points):
+        entries = []
+        for point in (pathlib.Path(self.root.anchor), *points):
+            encoded = (point.as_posix().replace('\\', r'\134').replace(' ', r'\040')
+                       .replace('\t', r'\011').replace('\n', r'\012'))
+            entries.append(f'49 41 0:28 / {encoded} rw - ext4 /dev/fixture rw\n')
+        self.put('/proc/self/mountinfo', ''.join(entries))
 
     def install(self, service):
         self.services.add(service)
+        self.running_units.add(service + '.service')
         base = '/opt/nekopass' if service == 'nekopass-agent' else '/opt/' + service
         config = '/etc/nekopass' if service == 'nekopass-agent' else '/etc/' + service
         for name in ['nekopass-agent', 'nekopass-agent.previous', 'nekopass-agent-uninstall', 'nekopass-update', 'nekopass-agent-update-source.json']:
@@ -82,7 +111,9 @@ class UninstallerTests(unittest.TestCase):
         for unit in self.module.unit_names(service):
             self.put('/etc/systemd/system/' + unit)
             self.put('/etc/systemd/system/' + unit + '.d/override.conf')
-        self.put('/usr/local/bin/nekopassctl')
+        manager = self.put('/usr/local/bin/nekopassctl',
+                           '#!/usr/bin/env bash\n# Native systemd service manager. No application credentials are executed as shell code.\n')
+        manager.chmod(0o755)
 
     def run_uninstall(self, *args):
         output = io.StringIO()
@@ -115,6 +146,7 @@ class UninstallerTests(unittest.TestCase):
         self.assertFalse(any('nekopass-agent.service' in call for call in self.calls))
 
     def request(self, service, authorize=True):
+        self.running_units.add(service + '-uninstall.service')
         binary = self.module.path(self.module.install_base(service) + '/bin/nekopass-agent')
         reporter_fixture = self.put('/staged-reporter-output')
         reporter_fixture.chmod(0o700)
@@ -203,6 +235,87 @@ class UninstallerTests(unittest.TestCase):
         self.assertFalse((self.root / 'usr/local/bin/nekopassctl').exists())
         self.services.clear()
         self.run_uninstall()
+
+    def test_default_agent_uninstall_ignores_old_panel_archive_and_empty_install_root(self):
+        self.install('nekopass-agent')
+        archive = self.put('/etc/nekopass-panel-hk1/.uninstalled-fixture/control.env')
+        (self.root / 'opt/nekopass-panel-hk1').mkdir()
+        self.run_uninstall('--service-name', 'nekopass-agent')
+        self.assertFalse((self.root / 'opt/nekopass').exists())
+        self.assertFalse((self.root / 'usr/local/bin/nekopassctl').exists())
+        self.assertTrue(archive.is_file())
+
+    def test_default_agent_uninstall_keeps_default_updater_when_only_panel_config_remains(self):
+        self.install('nekopass-agent')
+        panel = self.put('/etc/nekopass/control.env')
+        self.run_uninstall('--service-name', 'nekopass-agent')
+        self.assertTrue(panel.is_file())
+        self.assertTrue((self.root / 'opt/nekopass/bin/nekopass-update').exists())
+        self.assertTrue((self.root / 'usr/local/bin/nekopassctl').exists())
+
+    def test_default_agent_uninstall_keeps_default_updater_for_external_panel_unit(self):
+        self.install('nekopass-agent')
+        self.external_units.add('nekopass.service')
+        self.run_uninstall('--service-name', 'nekopass-agent')
+        self.assertTrue((self.root / 'opt/nekopass/bin/nekopass-update').exists())
+        self.assertTrue((self.root / 'usr/local/bin/nekopassctl').exists())
+
+    def test_default_agent_uninstall_removes_its_updater_if_only_named_panel_remains(self):
+        self.install('nekopass-agent')
+        panel = self.put('/etc/nekopass-panel-hk1/control.env')
+        updater = self.put('/opt/nekopass-panel-hk1/bin/nekopass-update')
+        self.run_uninstall('--service-name', 'nekopass-agent')
+        self.assertFalse((self.root / 'opt/nekopass/bin/nekopass-update').exists())
+        self.assertTrue(panel.is_file())
+        self.assertTrue(updater.is_file())
+        self.assertTrue((self.root / 'usr/local/bin/nekopassctl').exists())
+
+    def test_remote_last_agent_cleans_managed_cli_but_not_its_running_report_unit(self):
+        service = 'nekopass-agent-hk1'
+        self.install(service)
+        self.assertEqual(self.request(service), [['-uninstall-check'], []])
+        self.assertFalse((self.root / 'usr/local/bin/nekopassctl').exists())
+        self.assertIn(service + '-uninstall.service', self.running_units)
+
+    def test_last_agent_preserves_a_replaced_manager(self):
+        self.install('nekopass-agent-test')
+        manager = self.put('/usr/local/bin/nekopassctl', '#!/bin/sh\nexec customctl "$@"\n')
+        self.run_uninstall('--service-name', 'nekopass-agent-test')
+        self.assertEqual(manager.read_text(), '#!/bin/sh\nexec customctl "$@"\n')
+
+    def test_last_agent_preserves_manager_if_systemd_inventory_is_unavailable(self):
+        self.install('nekopass-agent-test')
+        original = self.command
+
+        def incomplete(args, **_):
+            if args[:2] == ['systemctl', 'list-units']:
+                return subprocess.CompletedProcess(args, 1, '', 'unavailable')
+            return original(*args)
+
+        with patch.object(self.module.subprocess, 'run', side_effect=incomplete):
+            self.run_uninstall('--service-name', 'nekopass-agent-test')
+        self.assertTrue((self.root / 'usr/local/bin/nekopassctl').is_file())
+
+    def test_mountpoint_in_dedicated_agent_tree_is_rejected_before_stopping(self):
+        service = 'nekopass-agent-hk1'
+        self.install(service)
+        target = self.root / 'opt' / service
+        preserved = self.put(f'/opt/{service}/mount point/data')
+        for point in (target, preserved.parent):
+            with self.subTest(point=point):
+                self.write_mountinfo(point)
+                with self.assertRaisesRegex(ValueError, '卸载目录包含挂载点'):
+                    self.module.main(['--service-name', service])
+                self.assertTrue(preserved.is_file())
+                self.assertFalse(any(call[:2] == ('systemctl', 'stop') for call in self.calls))
+
+    def test_unreadable_mount_inventory_is_rejected_before_stopping(self):
+        service = 'nekopass-agent-hk1'
+        self.install(service)
+        (self.root / 'proc/self/mountinfo').unlink()
+        with self.assertRaisesRegex(ValueError, '无法读取系统挂载信息'):
+            self.module.main(['--service-name', service])
+        self.assertFalse(any(call[:2] == ('systemctl', 'stop') for call in self.calls))
 
     def test_invalid_names_fail_before_any_system_operation(self):
         for name in ['nekopass', '../nekopass-agent', 'nekopass-agent-hk1;id', 'nekopass-agent-abc/def', 'nekopass-agent-' + 'a' * 17]:

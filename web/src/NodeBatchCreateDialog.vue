@@ -114,37 +114,39 @@ async function createNodes() {
     @update:model-value="closeDialog"
     @closed="resetForm"
   >
-    <el-form label-position="top" :disabled="busy" @submit.prevent="createNodes">
-      <el-form-item label="节点列表">
-        <el-input
-          v-model="input"
-          type="textarea"
-          :rows="7"
-          placeholder="东京入口,tokyo.example.com&#10;香港入口,hongkong.example.com"
-        />
-        <p class="field-tip">每行填名称和公网 IP 或域名，用半角逗号分隔，也可以粘贴表格中的两列。地址可留空，每次最多 {{ maxBatchNodes }} 个。</p>
-      </el-form-item>
-      <el-form-item label="所属节点组">
-        <el-select v-model="groupIDs" multiple filterable placeholder="可选，应用到本批全部节点">
-          <el-option v-for="group in groups" :key="group.id" :label="group.name" :value="group.id" />
-        </el-select>
-      </el-form-item>
-    </el-form>
+    <div class="layout-stack">
+      <el-form class="batch-create-form" label-position="top" :disabled="busy" @submit.prevent="createNodes">
+        <el-form-item label="节点列表">
+          <el-input
+            v-model="input"
+            type="textarea"
+            :rows="7"
+            placeholder="东京入口,tokyo.example.com&#10;香港入口,hongkong.example.com"
+          />
+          <span class="field-tip">每行填名称和公网 IP 或域名，用半角逗号分隔，也可以粘贴表格中的两列。地址可留空，每次最多 {{ maxBatchNodes }} 个。</span>
+        </el-form-item>
+        <el-form-item label="所属节点组">
+          <el-select v-model="groupIDs" multiple filterable placeholder="可选，应用到本批全部节点">
+            <el-option v-for="group in groups" :key="group.id" :label="group.name" :value="group.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
 
-    <el-alert v-if="overLimit" :title="`每次最多创建 ${maxBatchNodes} 个节点`" type="warning" :closable="false" />
-    <el-table v-else-if="invalid.length" :data="invalid" max-height="180" aria-label="输入有误的行">
-      <el-table-column prop="line" label="行号" width="74" />
-      <el-table-column prop="error" label="请修改" />
-    </el-table>
-    <template v-if="summary">
-      <el-alert :title="summary" type="warning" :closable="false" />
-      <el-table v-if="failures.length" :data="failures" max-height="180" aria-label="创建失败的节点">
-        <el-table-column label="节点" min-width="150">
-          <template #default="{ row }">{{ row.name }}<br v-if="row.address" /><small v-if="row.address">{{ row.address }}</small></template>
-        </el-table-column>
-        <el-table-column prop="error" label="失败原因" min-width="240" />
+      <el-alert v-if="overLimit" :title="`每次最多创建 ${maxBatchNodes} 个节点`" type="warning" :closable="false" />
+      <el-table v-else-if="invalid.length" :data="invalid" max-height="180" aria-label="输入有误的行">
+        <el-table-column prop="line" label="行号" width="74" />
+        <el-table-column prop="error" label="请修改" />
       </el-table>
-    </template>
+      <template v-if="summary">
+        <el-alert :title="summary" type="warning" :closable="false" />
+        <el-table v-if="failures.length" :data="failures" max-height="180" aria-label="创建失败的节点">
+          <el-table-column label="节点" min-width="150">
+            <template #default="{ row }">{{ row.name }}<br v-if="row.address" /><small v-if="row.address">{{ row.address }}</small></template>
+          </el-table-column>
+          <el-table-column prop="error" label="失败原因" min-width="240" />
+        </el-table>
+      </template>
+    </div>
 
     <template #footer>
       <el-button :disabled="busy" @click="closeDialog">关闭</el-button>
@@ -157,3 +159,9 @@ async function createNodes() {
     </template>
   </el-dialog>
 </template>
+
+<style scoped>
+.batch-create-form :deep(.el-form-item:last-child) {
+  margin-bottom: 0;
+}
+</style>

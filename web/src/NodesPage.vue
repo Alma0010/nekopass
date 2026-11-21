@@ -254,7 +254,7 @@ function runBatch(action:string){
  <section class="surface">
   <div class="section-header">
    <strong>{{view === 'groups' ? '节点组管理' : '节点管理'}}</strong>
-   <div class="admin-actions">
+   <div class="admin-actions layout-actions">
     <el-dropdown v-if="view==='nodes'" trigger="click" @command="runBatch">
      <el-button :loading="batchInProgress" :disabled="nodeActionInProgress">批量操作{{batchInProgress && batchTotal ? ` · ${batchDone}/${batchTotal}` : ''}}</el-button>
      <template #dropdown><el-dropdown-menu>
@@ -267,12 +267,12 @@ function runBatch(action:string){
     <el-button type="primary" @click="editNode()"><Icon name="add" />添加节点</el-button>
    </div>
   </div>
-  <div class="section-body">
+  <div class="section-body layout-stack">
    <nav class="admin-resource-tabs"><a href="/admin/nodes" :class="{active:view==='nodes'}">节点列表</a><a href="/admin/node_groups" :class="{active:view==='groups'}">节点组</a></nav>
-   <div v-if="view==='nodes'">
-    <div class="node-filters">
+   <div v-if="view==='nodes'" class="layout-stack">
+    <div class="node-filters layout-toolbar">
      <el-input v-model="nodeSearch" aria-label="搜索节点" placeholder="搜索名称、公网地址" clearable />
-     <el-select v-model="nodeScope" aria-label="筛选节点状态">
+     <el-select v-model="nodeScope" aria-label="筛选节点状态" placeholder="全部状态">
       <el-option label="全部状态" value="" /><el-option label="在线" value="online" />
       <el-option label="离线" value="offline" /><el-option label="已停用" value="disabled" />
      </el-select>
@@ -280,10 +280,10 @@ function runBatch(action:string){
       <el-option label="全部节点组" :value="0" />
       <el-option v-for="group in groups" :key="group.id" :label="group.name" :value="group.id" />
      </el-select>
-     <span v-if="selectedNodes.length" class="subtle">已选 {{selectedNodes.length}} / {{visibleNodes.length}}<el-button link type="primary" @click="selectVisible(false)">清空</el-button></span>
+     <span v-if="selectedNodes.length" class="subtle node-selection layout-actions">已选 {{selectedNodes.length}} / {{visibleNodes.length}}<el-button link type="primary" @click="selectVisible(false)">清空</el-button></span>
     </div>
-    <p v-if="nodeScope==='offline'" class="field-tip">仅显示已启用的离线节点 <el-button link type="primary" @click="nodeScope=''">显示全部节点</el-button></p>
-    <el-table :data="visibleNodes" row-key="id" empty-text="暂无匹配的节点">
+    <p v-if="nodeScope==='offline'" class="field-tip node-filter-tip">仅显示已启用的离线节点 <el-button link type="primary" @click="nodeScope=''">显示全部节点</el-button></p>
+    <el-table class="resource-table" :data="visibleNodes" row-key="id" empty-text="暂无匹配的节点">
      <el-table-column width="48" align="center">
       <template #header>
        <input type="checkbox" aria-label="全选当前筛选结果" :disabled="!visibleNodes.length" :checked="allVisibleSelected" :indeterminate.prop="selectedNodes.length>0&&!allVisibleSelected" @change="selectVisible(!allVisibleSelected)" />
@@ -310,18 +310,20 @@ function runBatch(action:string){
      <el-table-column prop="active_connections" label="转发连接" width="84" />
      <el-table-column fixed="right" class-name="table-actions" label="操作" width="196">
       <template #default="{row}">
-       <el-button link type="primary" @click="installation(row.id)">安装命令</el-button>
-       <el-button link type="primary" @click="editNode(row)">编辑</el-button>
-       <el-button link type="primary" tag="a" :href="`/admin/nodes/${row.id}/ddns`">DDNS</el-button>
-       <el-button link type="primary" tag="a" :href="`/admin/nodes/${row.id}/ip-recovery`">自动换 IP</el-button>
-       <el-button link type="primary" :loading="updatingNode===row.id" :disabled="nodeActionInProgress || !row.online || !!row.uninstall_status || ['queued','running'].includes(row.update_status?.state || '')" @click="updateNode(row)">更新</el-button>
-       <el-button v-if="row.uninstall_status?.state!=='queued'" link type="danger" :loading="removingNode===row.id" :disabled="nodeActionInProgress" @click="removeNode(row)">{{row.uninstall_status?.state==='failed'?'重试卸载':'卸载'}}</el-button>
-       <el-button v-if="row.uninstall_status || (row.bound&&!row.enabled&&!row.uninstall_supported)" link type="danger" :disabled="nodeActionInProgress" @click="removeNode(row,true)">仅删除面板记录</el-button>
+       <div class="layout-actions node-row-actions">
+        <el-button link type="primary" @click="installation(row.id)">安装命令</el-button>
+        <el-button link type="primary" @click="editNode(row)">编辑</el-button>
+        <el-button link type="primary" tag="a" :href="`/admin/nodes/${row.id}/ddns`">DDNS</el-button>
+        <el-button link type="primary" tag="a" :href="`/admin/nodes/${row.id}/ip-recovery`">自动换 IP</el-button>
+        <el-button link type="primary" :loading="updatingNode===row.id" :disabled="nodeActionInProgress || !row.online || !!row.uninstall_status || ['queued','running'].includes(row.update_status?.state || '')" @click="updateNode(row)">更新</el-button>
+        <el-button v-if="row.uninstall_status?.state!=='queued'" link type="danger" :loading="removingNode===row.id" :disabled="nodeActionInProgress" @click="removeNode(row)">{{row.uninstall_status?.state==='failed'?'重试卸载':'卸载'}}</el-button>
+        <el-button v-if="row.uninstall_status || (row.bound&&!row.enabled&&!row.uninstall_supported)" link type="danger" :disabled="nodeActionInProgress" @click="removeNode(row,true)">仅删除面板记录</el-button>
+       </div>
       </template>
      </el-table-column>
     </el-table>
    </div>
-   <div v-else><el-table :data="groups" empty-text="暂无节点组"><el-table-column prop="name" label="名称" min-width="170" /><el-table-column prop="description" label="说明" min-width="200" /><el-table-column label="节点数" width="100"><template #default="{ row }">{{ row.node_ids.length }}</template></el-table-column><el-table-column label="负载策略" min-width="150"><template #default="{row}">{{({least_connections:'加权最少连接',round_robin:'加权轮询',random:'加权随机'} as Record<string,string>)[row.strategy]||'加权最少连接'}}</template></el-table-column><el-table-column prop="plan_count" label="关联套餐" width="100" /><el-table-column prop="sort_order" label="显示顺序" width="100" /><el-table-column label="状态" width="76"><template #default="{ row }">{{ row.enabled ? '启用' : '停用' }}</template></el-table-column><el-table-column fixed="right" class-name="table-actions" label="操作" width="130"><template #default="{ row }"><el-button link type="primary" @click="editGroup(row)">编辑</el-button><el-button link type="danger" :disabled="row.plan_count > 0" @click="removeGroup(row.id)">删除</el-button></template></el-table-column></el-table></div></div></section>
+   <div v-else><el-table class="resource-table" :data="groups" empty-text="暂无节点组"><el-table-column prop="name" label="名称" min-width="170" /><el-table-column prop="description" label="说明" min-width="200" /><el-table-column label="节点数" width="100"><template #default="{ row }">{{ row.node_ids.length }}</template></el-table-column><el-table-column label="负载策略" min-width="150"><template #default="{row}">{{({least_connections:'加权最少连接',round_robin:'加权轮询',random:'加权随机'} as Record<string,string>)[row.strategy]||'加权最少连接'}}</template></el-table-column><el-table-column prop="plan_count" label="关联套餐" width="100" /><el-table-column prop="sort_order" label="显示顺序" width="100" /><el-table-column label="状态" width="76"><template #default="{ row }">{{ row.enabled ? '启用' : '停用' }}</template></el-table-column><el-table-column fixed="right" class-name="table-actions" label="操作" width="130"><template #default="{ row }"><el-button link type="primary" @click="editGroup(row)">编辑</el-button><el-button link type="danger" :disabled="row.plan_count > 0" @click="removeGroup(row.id)">删除</el-button></template></el-table-column></el-table></div></div></section>
  <NodeBatchCreateDialog v-model="batchCreateOpen" :groups="groups" :make-defaults="defaults" @created="emit('refresh')" />
  <el-dialog v-model="removalResultOpen" title="节点批量卸载结果" width="650px" class="managed-form-dialog">
   <el-table :data="removalResults">
@@ -332,13 +334,13 @@ function runBatch(action:string){
   <template #footer><el-button @click="removalResultOpen=false">关闭</el-button></template>
  </el-dialog>
  <el-dialog v-model="batchResultOpen" title="节点批量更新结果" width="620px" class="managed-form-dialog">
-  <template v-if="batchResult">
+  <div v-if="batchResult" class="layout-stack node-dialog-stack">
    <p>{{batchResult.version}}：已下发 {{batchResult.submitted}} 个，提交失败 {{batchResult.failures.length}} 个。</p>
    <p class="subtle">跳过：{{skippedText(batchResult.skipped)}}。</p>
    <el-alert v-if="batchResult.notSubmitted" :title="`登录状态或权限已变化，剩余 ${batchResult.notSubmitted} 个节点未提交`" type="warning" :closable="false" />
    <el-table v-if="batchResult.failures.length" :data="batchResult.failures"><el-table-column prop="name" label="节点" min-width="140" /><el-table-column prop="error" label="提交失败原因" min-width="240" /></el-table>
    <p class="field-tip">已下发表示任务已进入更新队列，实际更新进度请查看列表中的节点版本栏。</p>
-  </template>
+  </div>
   <template #footer><el-button @click="batchResultOpen=false">关闭</el-button></template>
  </el-dialog>
  <el-dialog v-model="nodeDialog" :title="editID ? '编辑节点' : '添加节点'" width="700px" top="4vh" class="managed-form-dialog"><el-form label-position="top" @submit.prevent="saveNode"><div class="form-grid"><el-form-item label="节点名称"><el-input v-model="nodeForm.name" maxlength="80" /></el-form-item><el-form-item label="公网 IP / 域名"><el-input v-model="nodeForm.public_address" placeholder="用于转发入口地址" /></el-form-item></div><el-form-item label="节点密钥"><el-input v-model="nodeForm.token" placeholder="留空保存后自动生成"><template #append><el-button :disabled="!nodeForm.token" @click="copyToken(nodeForm.token)">复制</el-button></template></el-input><span class="field-tip">留空保存会生成新密钥；修改已安装节点的密钥后，还需更新节点端的 NEKOPASS_NODE_TOKEN 并重启服务。</span></el-form-item><el-form-item label="备注（仅管理员可见）"><el-input v-model="nodeForm.notes" type="textarea" :rows="2" /></el-form-item><el-form-item label="所属节点组"><el-select v-model="nodeForm.group_ids" multiple filterable><el-option v-for="g in groups" :key="g.id" :label="g.name" :value="g.id" /></el-select></el-form-item><div class="form-section-title">转发设置</div><div class="form-grid"><el-form-item label="监听地址"><el-input v-model="nodeForm.listen_host" placeholder="0.0.0.0 或 ::" /></el-form-item><el-form-item label="节点总连接数上限"><LimitInput v-model="nodeForm.max_connections" unit="条" :max="1000000" /></el-form-item><el-form-item label="可分配端口起始"><el-input-number v-model="nodeForm.port_min" :min="1024" :max="65535" /></el-form-item><el-form-item label="可分配端口结束"><el-input-number v-model="nodeForm.port_max" :min="nodeForm.port_min" :max="65535" /></el-form-item><el-form-item label="目标建连超时 / 秒"><el-input-number v-model="nodeForm.dial_timeout_seconds" :min="1" :max="120" /></el-form-item><el-form-item label="UDP 会话空闲超时 / 秒"><el-input-number v-model="nodeForm.udp_idle_timeout_seconds" :min="10" :max="3600" /></el-form-item><el-form-item label="空闲连接超时 / 秒"><el-input-number v-model="nodeForm.idle_timeout_seconds" :min="10" :max="86400" /></el-form-item></div><NodeConnectionFields :form="nodeForm" :nodes="nodes" :nodeID="editID" @edit-transport="protocolDialog=true" @edit-security="securityDialog=true"><template #ingress-actions><el-form-item label="TLS 入站"><el-button :disabled="!editID" plain @click="tlsInboundDialog=true">编辑 TLS 入站</el-button></el-form-item></template></NodeConnectionFields><div class="form-section-title">探针设置</div><div class="form-grid"><el-form-item label="采样间隔 / 秒"><el-input-number v-model="nodeForm.probe_interval_seconds" :min="2" :max="60" /></el-form-item><el-form-item label="磁盘监测路径"><el-input v-model="nodeForm.disk_path" placeholder="/" /></el-form-item></div><el-form-item label="统计网卡"><el-input v-model="interfaces" type="textarea" :rows="2" placeholder="留空自动选择默认路由网卡；手动填写时一行一个，如 eth0" /></el-form-item><el-form-item label="启用节点"><el-switch v-model="nodeForm.enabled" /><span class="field-tip switch-hint">停用会关闭该节点上的转发，保留主控连接和探针上报。</span></el-form-item></el-form><template #footer><el-button @click="nodeDialog = false">关闭</el-button><el-button type="primary" :loading="busy" @click="saveNode">保存并下发</el-button></template></el-dialog>
@@ -348,23 +350,88 @@ function runBatch(action:string){
  <el-dialog v-model="groupDialog" :title="groupID ? '编辑节点组' : '创建节点组'" width="720px" top="4vh" class="managed-form-dialog"><el-form label-position="top"><el-form-item label="节点组名称"><el-input v-model="groupForm.name" /></el-form-item><el-form-item label="说明"><el-input v-model="groupForm.description" type="textarea" :rows="2" /></el-form-item><el-form-item label="组内节点"><el-select v-model="groupForm.node_ids" multiple filterable><el-option v-for="n in nodes" :key="n.id" :label="n.name" :value="n.id" /></el-select></el-form-item><el-form-item label="出口负载策略"><el-select v-model="groupForm.strategy"><el-option label="加权最少连接" value="least_connections"/><el-option label="加权轮询" value="round_robin"/><el-option label="加权随机" value="random"/></el-select></el-form-item>
  <el-table v-if="groupForm.members.length" :data="groupForm.members" class="group-members-table"><el-table-column label="节点" min-width="150"><template #default="{row}">{{nodes.find(n=>n.id===row.node_id)?.name}}<small v-if="!nodes.find(n=>n.id===row.node_id)?.tunnel_exit_enabled" class="subtle"> · 未启用出口</small></template></el-table-column><el-table-column label="出口职责" width="170"><template #default="{row}"><el-select v-model="row.role"><el-option label="正常出口" value="active"/><el-option label="容灾备用" value="standby"/><el-option label="不参与出口转发" value="disabled"/></el-select></template></el-table-column><el-table-column label="权重" width="160"><template #default="{row}"><el-input-number v-model="row.weight" :min="1" :max="1000" :disabled="row.role==='disabled'"/></template></el-table-column></el-table>
  <p class="field-tip">所有正常出口不可用时才使用备用出口。职责只影响本组的出口调度，不改变套餐的节点访问权限。</p>
- <div class="group-health-fields"><el-form-item label="探测间隔（秒）"><el-input-number v-model="groupForm.health_interval_seconds" :min="2" :max="60"/></el-form-item><el-form-item label="连续失败次数"><el-input-number v-model="groupForm.health_failures" :min="1" :max="20"/></el-form-item><el-form-item label="连续恢复次数"><el-input-number v-model="groupForm.health_successes" :min="1" :max="20"/></el-form-item></div>
+ <div class="form-grid group-health-fields"><el-form-item label="探测间隔（秒）"><el-input-number v-model="groupForm.health_interval_seconds" :min="2" :max="60"/></el-form-item><el-form-item label="连续失败次数"><el-input-number v-model="groupForm.health_failures" :min="1" :max="20"/></el-form-item><el-form-item label="连续恢复次数"><el-input-number v-model="groupForm.health_successes" :min="1" :max="20"/></el-form-item></div>
  <el-form-item label="显示顺序"><el-input-number v-model="groupForm.sort_order" /></el-form-item><el-form-item label="启用节点组"><el-switch v-model="groupForm.enabled" /></el-form-item></el-form><template #footer><el-button @click="groupDialog = false">取消</el-button><el-button type="primary" :loading="busy" @click="saveGroup">保存节点组</el-button></template></el-dialog>
  
-<el-dialog v-model="installDialog" title="节点一键安装命令" width="780px" @closed="installCommand=''">
- <p>在节点服务器上以 root 运行。命令已包含面板地址、主控端口、此节点密钥和连接方式。</p>
- <p v-if="installExisting" class="field-tip">重复执行会覆盖程序和连接配置，连接信息不变时保留原状态。服务器完全重建后，可使用原密钥恢复此节点；旧服务器应已离线，主控与节点均需支持状态恢复。无法确认用量的旧流量授权会按已消耗处理。</p>
- <p v-else class="field-tip">wget 下载脚本后由 bash 执行；命令可重复使用，更换节点密钥后重新复制。</p>
- <el-input :model-value="installCommand" type="textarea" :rows="6" readonly class="install-command" />
- <p class="field-tip">下载源、版本、主控地址和连接方式来自 <a class="text-link" href="/admin/settings">系统设置</a>。管理 API 密钥不会下发到节点。</p>
+<el-dialog v-model="installDialog" title="节点一键安装命令" width="780px" class="managed-form-dialog" @closed="installCommand=''">
+ <div class="layout-stack node-dialog-stack">
+  <p>在节点服务器上以 root 运行。命令已包含面板地址、主控端口、此节点密钥和连接方式。</p>
+  <p v-if="installExisting" class="field-tip">重复执行会覆盖程序和连接配置，连接信息不变时保留原状态。服务器完全重建后，可使用原密钥恢复此节点；旧服务器应已离线，主控与节点均需支持状态恢复。无法确认用量的旧流量授权会按已消耗处理。</p>
+  <p v-else class="field-tip">wget 下载脚本后由 bash 执行；命令可重复使用，更换节点密钥后重新复制。</p>
+  <el-input :model-value="installCommand" type="textarea" :rows="6" readonly class="install-command" />
+  <p class="field-tip">下载源、版本、主控地址和连接方式来自 <a class="text-link" href="/admin/settings">系统设置</a>。管理 API 密钥不会下发到节点。</p>
+ </div>
  <template #footer><el-button @click="installDialog=false">关闭</el-button><el-button type="primary" @click="copyInstall">复制安装命令</el-button></template>
  </el-dialog>
 </template>
 
 <style scoped>
-.group-health-fields{display:flex;gap:14px;flex-wrap:wrap;margin-top:18px}.group-members-table{margin-top:6px}
-.node-filters{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:12px}
-.node-filters .el-input{width:230px}.node-filters .el-select{width:155px}.node-filters .el-button{margin-left:8px}
-.node-select-area{display:flex;align-items:center;justify-content:center;min-height:28px;cursor:pointer;user-select:none}
-input[type='checkbox']{accent-color:var(--el-color-primary);margin:0;cursor:pointer}
+.group-health-fields {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 128px), 1fr));
+}
+
+.node-filters > .el-input {
+  flex: 1 1 220px;
+  max-width: 300px;
+  min-width: 0;
+}
+
+.node-filters > .el-select {
+  flex: 0 1 155px;
+  min-width: 0;
+}
+
+.node-selection,
+.node-row-actions {
+  column-gap: 6px;
+}
+
+.node-filter-tip,
+.node-dialog-stack > p {
+  margin: 0;
+}
+
+.node-select-area {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  cursor: pointer;
+  user-select: none;
+}
+
+input[type='checkbox'] {
+  accent-color: var(--el-color-primary);
+  margin: 0;
+  cursor: pointer;
+}
+
+@media (max-width: 700px) {
+  .resource-table :deep(.el-table__cell.el-table-fixed-column--right) {
+    position: static !important;
+    border-left: 0;
+  }
+
+  .resource-table :deep(.el-table__cell.el-table-fixed-column--right::before) {
+    display: none;
+  }
+}
+
+@media (max-width: 540px) {
+  .node-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .node-filters > .el-input,
+  .node-selection {
+    grid-column: 1 / -1;
+  }
+
+  .node-filters > .el-input,
+  .node-filters > .el-select {
+    width: 100%;
+    max-width: none;
+  }
+}
 </style>

@@ -86,12 +86,23 @@ def managed_service_name(name):
     return name
 
 
-def panel_present():
-    return (path('/etc/nekopass/control.env').exists()
-            or path('/opt/nekopass/bin/nekopass').exists()
-            or any(path('/etc/systemd/system').glob('nekopass.service*'))
-            or any(path('/etc').glob('nekopass-panel-*'))
-            or any(path('/opt').glob('nekopass-panel-*')))
+def default_panel_present():
+    panel_units = ('nekopass.service', 'nekopass-update.service', 'nekopass-update.path')
+    markers = [path('/etc/nekopass/control.env')]
+    markers.extend(path('/opt/nekopass/bin/nekopass' + suffix)
+                   for suffix in ('', '.previous', '.next', '.update-pending'))
+    markers.extend(path('/etc/systemd/system/' + unit) for unit in panel_units)
+    if any(marker.exists() or marker.is_symlink() for marker in markers):
+        return True
+
+    # Only the default panel uses this updater. Named panels have their own
+    # binaries, and a preserved archive is not a live installation.
+    for unit in panel_units:
+        load = command('systemctl', 'show', unit, '-p', 'LoadState', '--value', check=False)
+        active = command('systemctl', 'show', unit, '-p', 'ActiveState', '--value', check=False)
+        if load.stdout.strip() != 'not-found' or active.stdout.strip() != 'inactive':
+            return True
+    return False
 
 
 def unit_names(service):
@@ -127,7 +138,7 @@ def removal_paths(service):
         for suffix in ['', '.previous', '.next', '.update-pending']:
             items.append(path('/opt/nekopass/bin/nekopass-agent' + suffix))
         # The updater in this directory is shared with the default panel.
-        if not panel_present():
+        if not default_panel_present():
             items.append(path('/opt/nekopass/bin/nekopass-update'))
     else:
         if path('/etc/' + service + '/control.env').exists() or path('/opt/' + service + '/bin/nekopass').exists():
@@ -143,6 +154,30 @@ def check_path(target):
         raise ValueError('拒绝经过符号链接的卸载路径：' + str(target))
     if target.is_symlink() and (target.is_dir() or target.name.endswith('.d')):
         raise ValueError('拒绝递归删除符号链接目录：' + str(target))
+
+
+def check_recursive_mounts(targets):
+    directories = {target for target in targets if target.is_dir()}
+    if not directories:
+        return
+    found = False
+    try:
+        with path('/proc/self/mountinfo').open(encoding='utf-8', errors='surrogateescape', newline='') as mountinfo:
+            for line in mountinfo:
+                fields = line.split(' ')
+                if len(fields) < 6:
+                    raise ValueError('无法识别系统挂载信息，卸载未开始')
+                mountpoint = re.sub(r'\\([0-7]{3})', lambda m: chr(int(m[1], 8)), fields[4])
+                point = pathlib.Path(mountpoint)
+                if not point.is_absolute():
+                    raise ValueError('无法识别系统挂载信息，卸载未开始')
+                found = True
+                if point in directories or directories.intersection(point.parents):
+                    raise ValueError('卸载目录包含挂载点，拒绝递归删除：' + str(point))
+    except OSError:
+        raise ValueError('无法读取系统挂载信息，卸载未开始') from None
+    if not found:
+        raise ValueError('系统挂载信息为空，卸载未开始')
 
 
 def remove(target):
@@ -200,15 +235,86 @@ def update_lock(service):
     return file
 
 
+@contextlib.contextmanager
+def directory_lock(directory):
+    if os.name != 'posix':
+        yield
+        return
+    import fcntl
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
+
+
+def manager_needed(root, ignored_units):
+    patterns = ('nekopass*.service', 'nekopass*.path')
+    for kind, flags, ignored in (
+        ('list-unit-files', (), ()),
+        ('list-units', ('--plain', '--state=active,activating,deactivating,reloading'), ignored_units),
+    ):
+        result = subprocess.run(['systemctl', kind, '--no-legend', '--no-pager', *flags, *patterns],
+                                capture_output=True, text=True, timeout=5)
+        if result.returncode:
+            return True
+        for line in result.stdout.splitlines():
+            fields = line.split()
+            if fields and fields[0].endswith(('.service', '.path')) and fields[0] not in ignored:
+                return True
+    for home, files in (
+        (root / 'etc', ('control.env', 'agent.env')),
+        (root / 'opt', ('bin/nekopass', 'bin/nekopass-agent')),
+    ):
+        # Archives and empty installation directories do not need the manager.
+        for directory in home.glob('nekopass*'):
+            for name in files:
+                marker = directory / name
+                if marker.exists() or marker.is_symlink():
+                    return True
+    return False
+
+
+def cleanup_manager(root, ignored_units=(), dry_run=False):
+    manager = root / 'usr/local/bin/nekopassctl'
+    try:
+        if not manager.is_file() or manager.is_symlink():
+            return
+        owner = root.stat().st_uid
+        for parent in manager.parents:
+            if parent == root:
+                break
+            info = parent.lstat()
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != owner or (os.name == 'posix' and info.st_mode & 0o022):
+                return
+        with directory_lock(manager.parent):
+            info = manager.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != owner or info.st_nlink != 1 or (os.name == 'posix' and info.st_mode & 0o022):
+                return
+            with manager.open('rb') as file:
+                if (file.readline(128) != b'#!/usr/bin/env bash\n'
+                        or file.readline(128) != b'# Native systemd service manager. No application credentials are executed as shell code.\n'):
+                    return
+            if manager_needed(root, ignored_units):
+                return
+            if not dry_run:
+                manager.unlink()
+            print(f'{"将移除" if dry_run else "已移除"}闲置的服务管理脚本：{manager}')
+    except (OSError, subprocess.TimeoutExpired):
+        # Cleanup cannot be proven safe. Keep the shared script for a later retry.
+        print('未能确认共用管理脚本已闲置，已保留。', file=sys.stderr)
+
+
+
 def uninstall(requested, *, remote=False):
     services = [requested] if requested else discover()
     users = users_for(services)
     plans = {service: removal_paths(service) for service in services}
-    shared = []
-    if not requested and not panel_present():
-        shared.append(path('/usr/local/bin/nekopassctl'))
-    for target in [item for items in plans.values() for item in items] + shared:
+    targets = [item for items in plans.values() for item in items]
+    for target in targets:
         check_path(target)
+    check_recursive_mounts(targets)
     states = {}
     for service in services:
         base = install_base(service)
@@ -238,9 +344,6 @@ def uninstall(requested, *, remote=False):
                 log('删除 ' + str(item))
     for service in users:
         log('删除专用账户 ' + service)
-    for item in shared:
-        if item.exists():
-            log('删除 ' + str(item))
     import fcntl
     with contextlib.ExitStack() as locks:
         for service in services:
@@ -260,13 +363,17 @@ def uninstall(requested, *, remote=False):
                     command('systemctl', 'stop', unit)
                     if states[unit] not in ['masked', 'masked-runtime'] and unit in (service + '.service', service + '-uninstall.path', service + '-update.path'):
                         command('systemctl', 'disable', unit)
+        shared_updater = path('/opt/nekopass/bin/nekopass-update')
         for items in plans.values():
             for item in items:
-                remove(item)
+                if item == shared_updater and item.parent.is_dir():
+                    with directory_lock(item.parent):
+                        if not default_panel_present():
+                            remove(item)
+                else:
+                    remove(item)
         for service in users:
             remove_user(service)
-        for item in shared:
-            remove(item)
         command('systemctl', 'daemon-reload')
         for service in services:
             command('systemctl', 'reset-failed', *unit_names(service), check=False)
@@ -281,6 +388,7 @@ def uninstall(requested, *, remote=False):
                 target.rmdir()
             except OSError:
                 pass
+    cleanup_manager(ROOT, ignored_units=(requested + '-uninstall.service',) if remote else ())
     if remote:
         log('本机卸载完成，正在向面板回报结果。')
     else:

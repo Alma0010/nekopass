@@ -20,17 +20,28 @@ class PanelUninstallTests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = pathlib.Path(temp.name).resolve()
-        self.service = 'nekopass-panel-test'
         self.module = types.ModuleType('panel_uninstall')
         with patch.dict(sys.modules, fcntl=types.ModuleType('fcntl')):
             exec(compile(PAYLOAD, 'nekopassctl.sh', 'exec'), self.module.__dict__)
         self.calls = []
         self.units = {}
+        self.install('nekopass-panel-test')
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(patch.object(self.module, 'check_web_mounts'))
+        stack.enter_context(patch.object(self.module, 'update_lock', return_value=contextlib.nullcontext()))
+        self.real_safe_path = self.module.safe_path
+        stack.enter_context(patch.object(self.module, 'safe_path', side_effect=self.path_exists))
+        stack.enter_context(patch.object(self.module.subprocess, 'run', side_effect=self.systemctl))
+        self.cleanup_manager = stack.enter_context(patch.object(self.module, 'cleanup_manager', create=True))
+
+    def install(self, service):
+        self.service = service
         self.config = self.put(f'etc/{self.service}/control.env', 'secret-fixture')
         self.binary = self.put(f'opt/{self.service}/bin/nekopass')
         self.asset = self.put(f'opt/{self.service}/web/assets/main.js')
         self.helper = self.put(f'opt/{self.service}/bin/nekopass-update')
-        self.manager = self.put('usr/local/bin/nekopassctl')
+        self.manager = self.put('usr/local/bin/nekopassctl', '#!/usr/bin/env bash\n# Native systemd service manager. No application credentials are executed as shell code.\n')
         self.tls = self.put(f'etc/{self.service}/tls/server.key')
         self.result = self.put(f'var/lib/{self.service}/update-result.json')
         self.request = self.put(f'var/lib/{self.service}/update-request.json')
@@ -45,16 +56,10 @@ class PanelUninstallTests(unittest.TestCase):
         self.override = self.put(f'etc/systemd/system/{self.service}.service.d/override.conf')
         self.units[self.main.name] = dict(User=self.service, EnvironmentFiles=f'{self.config} (ignore_errors=no)',
                                          ExecStart=self.start(self.binary, '-web', self.asset.parents[1], '-http', ':9443'))
-        self.units[self.updater.name] = dict(ExecStart=self.start(self.manager, self.service, 'update'))
+        alias = 'panel' if service == 'nekopass' else service
+        self.units[self.updater.name] = dict(ExecStart=self.start(self.manager, alias, 'update'))
         self.units[self.watcher.name] = dict(Paths=f'{self.request} (PathExists)', Unit=self.updater.name,
                                              NeedDaemonReload='no')
-        stack = contextlib.ExitStack()
-        self.addCleanup(stack.close)
-        stack.enter_context(patch.object(self.module, 'check_web_mounts'))
-        stack.enter_context(patch.object(self.module, 'update_lock', return_value=contextlib.nullcontext()))
-        self.real_safe_path = self.module.safe_path
-        stack.enter_context(patch.object(self.module, 'safe_path', side_effect=self.path_exists))
-        stack.enter_context(patch.object(self.module.subprocess, 'run', side_effect=self.systemctl))
 
     def put(self, path, content='fixture'):
         dest = self.root / path
@@ -83,10 +88,10 @@ class PanelUninstallTests(unittest.TestCase):
             fields = dict(LoadState='not-found')
         return subprocess.CompletedProcess(command, 0, '\n'.join(f'{key}={value}' for key, value in fields.items()))
 
-    def uninstall(self, dry_run=False):
+    def uninstall(self, dry_run=False, *, yes=True, expected=0):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            self.assertEqual(self.module.uninstall(self.service, dry_run, True, self.root), 0)
+            self.assertEqual(self.module.uninstall(self.service, dry_run, yes, self.root), expected)
         self.assertNotIn('secret-fixture', output.getvalue())
         return output.getvalue()
 
@@ -118,8 +123,82 @@ class PanelUninstallTests(unittest.TestCase):
         self.assertTrue(self.config.is_file())
 
     def test_removes_dedicated_updater(self):
+        self.override.unlink()
+        for directory in (self.binary.parent, self.binary.parents[1], self.dropin.parent):
+            self.assertIn(f'将移除空目录：{directory}', self.uninstall(dry_run=True))
+            self.assertTrue(directory.is_dir())
+        self.cleanup_manager.assert_not_called()
         self.uninstall()
         self.assertFalse(self.helper.exists())
+        self.assertFalse(self.binary.parent.exists())
+        self.assertFalse(self.binary.parents[1].exists())
+        self.assertFalse(self.dropin.parent.exists())
+        self.cleanup_manager.assert_called_once_with(self.root)
+
+    def test_default_panel_removes_unused_shared_updater(self):
+        self.install('nekopass')
+        self.uninstall()
+        self.assertFalse(self.helper.exists())
+        self.assertFalse(self.binary.parent.exists())
+
+    def test_default_panel_preserves_updater_when_agent_unit_exists(self):
+        self.install('nekopass')
+        agent_unit = self.put('etc/systemd/system/nekopass-agent-uninstall.path')
+        self.uninstall()
+        self.assertTrue(self.helper.is_file())
+        self.assertTrue(agent_unit.is_file())
+
+    def test_rechecks_shared_updater_before_removal(self):
+        self.install('nekopass')
+
+        def add_local_agent(command, **kwargs):
+            if command == ['systemctl', 'stop', self.main.name]:
+                self.put('opt/nekopass/bin/nekopass-agent-uninstall')
+            return self.systemctl(command, **kwargs)
+
+        with patch.object(self.module.subprocess, 'run', side_effect=add_local_agent):
+            self.uninstall()
+        self.assertTrue(self.helper.is_file())
+
+    def test_legacy_retry_prunes_only_empty_directories_after_confirmation(self):
+        self.install('nekopass')
+        # A legacy uninstall archived the configuration and left two empty
+        # directories plus a shared helper whose ownership cannot be proved.
+        self.uninstall()
+        self.binary.parent.mkdir(parents=True, exist_ok=True)
+        self.helper.write_text('retained legacy updater', encoding='utf-8')
+        self.override.unlink()
+        self.cleanup_manager.reset_mock()
+        self.calls.clear()
+        with patch.object(self.module, 'verified_archive', return_value=True):
+            self.assertIn(f'将移除空目录：{self.dropin.parent}', self.uninstall(dry_run=True))
+            self.cleanup_manager.assert_called_once_with(self.root, dry_run=True)
+            self.cleanup_manager.reset_mock()
+            with patch.object(self.module, 'confirm', return_value=False):
+                self.uninstall(yes=False, expected=1)
+            self.assertTrue(self.dropin.parent.is_dir())
+            self.cleanup_manager.assert_not_called()
+            self.uninstall()
+        self.assertTrue(self.helper.is_file())
+        self.assertTrue(self.tls.is_file())
+        self.assertTrue(self.result.is_file())
+        self.assertFalse(self.dropin.parent.exists())
+        self.assertEqual(self.calls, [])
+        self.cleanup_manager.assert_called_once_with(self.root)
+
+    def test_legacy_retry_removes_unused_packaged_updater(self):
+        self.install('nekopass')
+        self.uninstall()
+        self.helper.parent.mkdir(parents=True)
+        self.helper.write_bytes(b'#!/usr/bin/python3\n'
+                                b'"""Native service updates from Alma0010/nekopass GitHub Releases."""\n')
+        with patch.object(self.module, 'verified_archive', return_value=True):
+            self.assertIn(str(self.helper), self.uninstall(dry_run=True))
+            self.assertTrue(self.helper.is_file())
+            self.uninstall()
+        self.assertFalse(self.helper.parents[1].exists())
+        self.assertTrue(self.tls.is_file())
+        self.assertTrue(self.result.is_file())
 
     def test_rejects_world_writable_opt(self):
         writable_directory = types.SimpleNamespace(st_mode=stat.S_IFDIR | 0o777, st_uid=0)

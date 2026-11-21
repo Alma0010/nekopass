@@ -13,7 +13,7 @@ write_uninstaller_payload() { return 1; }
 
 SERVER=''; TOKEN=''; TOKEN_FILE=''; PANEL_URL=''; INSTALL_TOKEN=''
 DOWNLOAD_BASE='https://github.com/Alma0010/nekopass/releases/download'
-VERSION='v0.20.5'; ARCH='auto'; BINARY_URL=''
+VERSION='v0.20.6'; ARCH='auto'; BINARY_URL=''
 SERVICE='nekopass-agent'
 NO_START=0; DRY_RUN=0; WORK=''; CHANGED=0; WAS_ACTIVE=0; WAS_ENABLED=0; STATE_BACKUP=''; RESET_STATE=0
 usage() {
@@ -22,7 +22,7 @@ Nekopass Agent installer (Linux + systemd, run as root)
 
 Direct mode:
   bash install-agent.sh -s https://panel.example.com:9443 -t NODE_TOKEN \
-    -d https://github.com/Alma0010/nekopass/releases/download -v v0.20.5
+    -d https://github.com/Alma0010/nekopass/releases/download -v v0.20.6
 
 Legacy installation credential (compatibility only):
   bash install-agent.sh -p https://panel.example.com -i INSTALL_TOKEN
@@ -33,7 +33,7 @@ Legacy installation credential (compatibility only):
   -p, --panel-url URL          Legacy install-token API root; unused with --server/--token
   -i, --install-token TOKEN    One-time node-specific installation credential
   -d, --download-base URL      HTTPS release directory
-  -v, --version VERSION        Release directory name; default v0.20.5
+  -v, --version VERSION        Release directory name; default v0.20.6
   -a, --arch ARCH              auto, amd64 or arm64
       --binary-url URL        Override architecture binary download URL
       --service-name NAME     Default nekopass-agent; isolated suffix allowed
@@ -49,6 +49,22 @@ The release installer also installs the service menu: nekopassctl
 HELP
 }
 die() { printf '[nekopass] ERROR: %s\n' "$*" >&2; exit 1; }
+install_shared_tool() {
+ python3 - "$1" "$2" <<'NEKOPASS_INSTALL_TOOL'
+import fcntl
+import os
+import subprocess
+import sys
+
+source, target = sys.argv[1:]
+directory = os.open(os.path.dirname(target), os.O_RDONLY | os.O_DIRECTORY)
+try:
+    fcntl.flock(directory, fcntl.LOCK_EX)
+    subprocess.run(['install', '-m', '755', source, target], check=True)
+finally:
+    os.close(directory)
+NEKOPASS_INSTALL_TOOL
+}
 log() { printf '[nekopass] %s\n' "$*"; }
 need_value() { [[ $# -ge 2 && -n "$2" ]] || die "Missing value for $1"; }
 while (($#)); do
@@ -336,7 +352,7 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 UNIT
 install -m 644 "$WORK/agent.service" "$UNIT"
-install -m 755 "$WORK/nekopass-update" "$(dirname "$BIN")/nekopass-update"
+install_shared_tool "$WORK/nekopass-update" "$(dirname "$BIN")/nekopass-update"
 python3 - "$DOWNLOAD_BASE" > "$WORK/update-source.json" <<'PY_UPDATE_SOURCE'
 import json,sys
 print(json.dumps({'download_base':sys.argv[1]}))
@@ -405,7 +421,7 @@ fi
 if [[ -f "$WORK/nekopassctl" ]]; then
  bash -n "$WORK/nekopassctl"
  install -d -m 755 /usr/local/bin
- install -m 755 "$WORK/nekopassctl" /usr/local/bin/nekopassctl
+ install_shared_tool "$WORK/nekopassctl" /usr/local/bin/nekopassctl
  log 'Service menu installed. Run: nekopassctl'
 fi
 CHANGED=0

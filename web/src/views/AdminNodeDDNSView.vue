@@ -21,7 +21,7 @@ async function update(){busy.value=true;try{await api(`admin/nodes/${id}/ddns/ru
   <div class="managed-rules-heading"><a class="back-link" href="/admin/nodes">← 返回节点管理</a><span>{{data?.node_name}} · DDNS</span></div>
   <nav class="admin-resource-tabs"><a href="/admin/nodes">节点管理</a><a :href="`/admin/nodes/${id}/ddns`" class="active">DDNS</a><a :href="`/admin/nodes/${id}/ip-recovery`">自动换 IP</a></nav>
   <section class="surface"><div class="section-header"><strong>DDNS 设置</strong><el-button type="primary" :loading="busy" @click="save">保存并下发</el-button></div>
-   <div class="section-body settings-form">
+   <div class="section-body settings-form layout-stack">
     <el-alert v-if="data && data.protocol_version<8" title="此节点需要升级到 Agent v0.9.0 或以上才能运行 DDNS。" type="warning" :closable="false"/>
     <el-alert v-if="data && form.ip_source==='interface' && data.protocol_version<30" title="请先升级节点端，再使用通过网卡获取 IP。" type="warning" :closable="false"/>
     <el-form label-position="top" @submit.prevent="save">

@@ -132,6 +132,7 @@ uninstall_panel() {
  python3 - "$SERVICE" "$@" <<'NEKOPASS_PANEL_UNINSTALL_PYTHON'
 import argparse
 import contextlib
+import errno
 import fcntl
 import os
 import pathlib
@@ -246,6 +247,145 @@ def check_web_mounts(web):
             raise ValueError(f'网站目录内存在挂载点，请先卸载：{mount}')
 
 
+def uses_shared_updater(base, config, state, units):
+    if (any((base / 'bin').glob('nekopass-agent*'))
+            or any(config.parent.glob('agent.env*'))
+            or (state / 'state.db').exists() or (state / 'state.db').is_symlink()):
+        return True
+    if base.name != 'nekopass':
+        return False
+    for suffix in ('.service', '-update.service', '-update.path', '-uninstall.service', '-uninstall.path'):
+        unit = units / ('nekopass-agent' + suffix)
+        if unit.exists() or unit.is_symlink():
+            return True
+        try:
+            if unit_info(unit).get('LoadState') != 'not-found':
+                return True
+        except ValueError:
+            # An unavailable service query cannot prove the helper is unused.
+            return True
+    return False
+
+
+@contextlib.contextmanager
+def directory_lock(directory):
+    if os.name != 'posix':
+        yield
+        return
+    import fcntl
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
+
+
+def manager_needed(root, ignored_units):
+    patterns = ('nekopass*.service', 'nekopass*.path')
+    for kind, flags, ignored in (
+        ('list-unit-files', (), ()),
+        ('list-units', ('--plain', '--state=active,activating,deactivating,reloading'), ignored_units),
+    ):
+        result = subprocess.run(['systemctl', kind, '--no-legend', '--no-pager', *flags, *patterns],
+                                capture_output=True, text=True, timeout=5)
+        if result.returncode:
+            return True
+        for line in result.stdout.splitlines():
+            fields = line.split()
+            if fields and fields[0].endswith(('.service', '.path')) and fields[0] not in ignored:
+                return True
+    for home, files in (
+        (root / 'etc', ('control.env', 'agent.env')),
+        (root / 'opt', ('bin/nekopass', 'bin/nekopass-agent')),
+    ):
+        # Archives and empty installation directories do not need the manager.
+        for directory in home.glob('nekopass*'):
+            for name in files:
+                marker = directory / name
+                if marker.exists() or marker.is_symlink():
+                    return True
+    return False
+
+
+def cleanup_manager(root, ignored_units=(), dry_run=False):
+    manager = root / 'usr/local/bin/nekopassctl'
+    try:
+        if not manager.is_file() or manager.is_symlink():
+            return
+        owner = root.stat().st_uid
+        for parent in manager.parents:
+            if parent == root:
+                break
+            info = parent.lstat()
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != owner or (os.name == 'posix' and info.st_mode & 0o022):
+                return
+        with directory_lock(manager.parent):
+            info = manager.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != owner or info.st_nlink != 1 or (os.name == 'posix' and info.st_mode & 0o022):
+                return
+            with manager.open('rb') as file:
+                if (file.readline(128) != b'#!/usr/bin/env bash\n'
+                        or file.readline(128) != b'# Native systemd service manager. No application credentials are executed as shell code.\n'):
+                    return
+            if manager_needed(root, ignored_units):
+                return
+            if not dry_run:
+                manager.unlink()
+            print(f'{"将移除" if dry_run else "已移除"}闲置的服务管理脚本：{manager}')
+    except (OSError, subprocess.TimeoutExpired):
+        # Cleanup cannot be proven safe. Keep the shared script for a later retry.
+        print('未能确认共用管理脚本已闲置，已保留。', file=sys.stderr)
+
+
+
+def verified_archive(config, root):
+    if not safe_path(config.parent, root, directory=True):
+        return False
+    for directory in config.parent.glob('.uninstalled-*'):
+        archived = directory / config.name
+        try:
+            if (safe_path(directory, root, directory=True)
+                    and stat.S_IMODE(directory.stat().st_mode) == 0o700
+                    and safe_path(archived, root)
+                    and stat.S_IMODE(archived.stat().st_mode) == 0o600):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def packaged_updater(path, root):
+    try:
+        if not safe_path(path, root) or path.stat().st_nlink != 1:
+            return False
+        with path.open('rb') as file:
+            return (file.readline(128) == b'#!/usr/bin/python3\n'
+                    and file.readline(128) == b'"""Native service updates from Alma0010/nekopass GitHub Releases."""\n')
+    except (OSError, ValueError):
+        return False
+
+
+def empty_directories(candidates, remove, root):
+    planned = set(remove)
+    empty = []
+    for path in candidates:
+        if safe_path(path, root, directory=True) and all(child in planned for child in path.iterdir()):
+            empty.append(path)
+            planned.add(path)
+    return empty
+
+
+def remove_empty_directories(directories):
+    for path in directories:
+        try:
+            path.rmdir()
+            print(f'已移除空目录：{path}')
+        except OSError as error:
+            if error.errno not in (errno.ENOENT, errno.ENOTEMPTY, errno.EEXIST, errno.EBUSY):
+                raise
+
+
 def uninstall(service, dry_run, yes, root=pathlib.Path('/'), *, locked=False):
     if not re.fullmatch(r'nekopass(?:-panel-[a-z0-9]{1,16})?', service):
         raise ValueError('面板服务名不正确。')
@@ -257,6 +397,7 @@ def uninstall(service, dry_run, yes, root=pathlib.Path('/'), *, locked=False):
     config = root / 'etc' / service / 'control.env'
     base = root / 'opt' / service
     binary = base / 'bin/nekopass'
+    update_helper = base / 'bin/nekopass-update'
     web = base / 'web'
     state = root / 'var/lib' / service
     request = state / 'update-request.json'
@@ -280,12 +421,10 @@ def uninstall(service, dry_run, yes, root=pathlib.Path('/'), *, locked=False):
         'ExecStart': starts_with(info, [str(manager), alias, 'update'], exact=True),
     })
     files = [binary, binary.with_suffix('.previous'), binary.with_suffix('.next'), binary.with_suffix('.update-pending')]
-    # The default Agent uses the same helper. A co-located Agent also takes
-    # precedence if its artifacts are present in a named panel's directory.
-    agents = [base / 'bin/nekopass-agent', base / 'bin/nekopass-agent-update-source.json',
-              config.with_name('agent.env'), state / 'state.db']
-    if service != 'nekopass' and not any(path.exists() or path.is_symlink() for path in agents):
-        files.append(base / 'bin/nekopass-update')
+    # A verified updater unit identifies the default panel's shared helper.
+    if (has_main and (service != 'nekopass' or has_updater)
+            and not uses_shared_updater(base, config, state, units)):
+        files.append(update_helper)
     remove = [path for path in files if safe_path(path, root)]
     generated_dropin = f'[Service]\nStateDirectory={service}\nEnvironment=NEKOPASS_PANEL_UPDATE_DIR={state}\n'
     if safe_path(dropin, root) and dropin.read_text(encoding='utf-8') == generated_dropin:
@@ -297,26 +436,38 @@ def uninstall(service, dry_run, yes, root=pathlib.Path('/'), *, locked=False):
     has_config = safe_path(config, root)
     if has_config and config.stat().st_nlink != 1:
         raise ValueError(f'面板配置不能是硬链接：{config}')
-    if not has_main:
-        if has_watcher or has_updater or remove or has_web or has_config:
-            raise ValueError(f'找不到可验证的 {primary.name}，无法安全判断哪些文件属于面板。')
-        if not dry_run and unit_info(primary).get('LoadState') == 'loaded':
-            subprocess.run(['systemctl', 'daemon-reload'], check=True)
+    if not has_main and (has_watcher or has_updater or remove or has_web or has_config):
+        raise ValueError(f'找不到可验证的 {primary.name}，无法安全判断哪些文件属于面板。')
+
+    manager_cleanup = has_main or verified_archive(config, root)
+    if (not has_main and manager_cleanup and packaged_updater(update_helper, root)
+            and not uses_shared_updater(base, config, state, units)):
+        remove.append(update_helper)
+    directories = empty_directories((dropin.parent, binary.parent, base), [*remove, *([web] if has_web else [])], root)
+    reload_needed = has_main or unit_info(primary).get('LoadState') == 'loaded'
+    if not (reload_needed or directories or remove or (manager_cleanup and manager.exists())):
         print(f'面板已卸载：{service}')
         return 0
 
     installed = [path for path, present in ((watcher, has_watcher), (updater, has_updater), (primary, has_main)) if present]
     if not locked:
         print(f'面板：{service}')
-        print('将停用并移除服务：' + ' '.join(path.name for path in installed))
+        if installed:
+            print('将停用并移除服务：' + ' '.join(path.name for path in installed))
         for path in remove:
             print(f'将移除：{path}')
         if has_web:
             print(f'将移除：{web}')
         if has_config:
             print(f'将归档面板配置至 {config.parent}/.uninstalled-*/control.env')
+        for path in directories:
+            print(f'将移除空目录：{path}')
         print('保留 PostgreSQL、数据库、运行数据与节点端。')
         if dry_run:
+            if has_main:
+                print('最后一个 Nekopass 实例卸载后会移除管理命令。')
+            elif manager_cleanup:
+                cleanup_manager(root, dry_run=True)
             return 0
         if not yes and not confirm(service):
             print('已取消卸载。')
@@ -329,7 +480,8 @@ def uninstall(service, dry_run, yes, root=pathlib.Path('/'), *, locked=False):
 
     for path in installed:
         subprocess.run(['systemctl', 'stop', path.name], check=True)
-    subprocess.run(['systemctl', 'disable', *[path.name for path in installed if path != updater]], check=True)
+    if installed:
+        subprocess.run(['systemctl', 'disable', *[path.name for path in installed if path != updater]], check=True)
     if has_config:
         archive = pathlib.Path(tempfile.mkdtemp(prefix='.uninstalled-', dir=config.parent)) / config.name
         config.chmod(0o600)
@@ -338,11 +490,20 @@ def uninstall(service, dry_run, yes, root=pathlib.Path('/'), *, locked=False):
     if has_web:
         shutil.rmtree(web)
     for path in remove:
-        path.unlink(missing_ok=True)
+        if path == update_helper:
+            with directory_lock(path.parent):
+                if (has_main or packaged_updater(path, root)) and not uses_shared_updater(base, config, state, units):
+                    path.unlink(missing_ok=True)
+        else:
+            path.unlink(missing_ok=True)
     # Keep the main unit until last so an interrupted removal is retryable.
     for path in installed:
         path.unlink(missing_ok=True)
-    subprocess.run(['systemctl', 'daemon-reload'], check=True)
+    remove_empty_directories(directories)
+    if reload_needed:
+        subprocess.run(['systemctl', 'daemon-reload'], check=True)
+    if manager_cleanup:
+        cleanup_manager(root)
     print(f'面板已卸载：{service}')
     return 0
 

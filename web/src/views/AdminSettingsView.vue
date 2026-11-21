@@ -73,7 +73,7 @@ async function copyKey(){try{await copyText(shownKey.value);ElMessage.success('�
             <el-form label-position="top" @submit.prevent="save">
               <div class="form-section-title">站点与连接地址</div>
               <el-form-item label="站点名称"><el-input v-model="form.site_name" maxlength="64" /></el-form-item>
-              <el-form-item label="面板对外地址"><el-input v-model="form.panel_url" placeholder="https://panel.example.com" /><el-button class="settings-inline-action" @click="currentAddress">填入当前面板地址</el-button></el-form-item>
+              <el-form-item label="面板对外地址"><div class="settings-address layout-toolbar"><el-input v-model="form.panel_url" placeholder="https://panel.example.com" /><el-button @click="currentAddress">填入当前面板地址</el-button></div></el-form-item>
               <div class="form-grid"><el-form-item label="Agent 主控域名 / IP"><el-input v-model="form.agent_host" placeholder="panel.example.com" /></el-form-item>
               <el-form-item label="Agent 控制端口"><el-input-number v-model="form.agent_port" :min="1" :max="65535" /></el-form-item>
               </div>
@@ -144,15 +144,17 @@ async function copyKey(){try{await copyText(shownKey.value);ElMessage.success('�
               <el-form-item label="管理员 Telegram 用户 ID"><el-input v-model="telegramAdmins" type="textarea" :rows="3" placeholder="每行一个数字用户 ID"/><span class="field-tip">仅这些账号的私聊可以查询面板和节点。先私聊机器人发送 /start，可在权限提示中看到自己的用户 ID。</span></el-form-item>
               <el-form-item label="IP / DDNS 通知目标 Chat ID"><el-input v-model="telegramChats" type="textarea" :rows="3" placeholder="每行一个 ID：用户私聊为正数，群组通常为负数"/><span class="field-tip">私聊接收人先发送 /start；群组先加入机器人。通知接收人不自动获得管理权限，群聊仅接收通知。</span></el-form-item>
               <el-form-item label="近期 IP 更换统计周期"><el-input-number v-model="form.telegram.statistics_days" :min="1" :max="90"/><span class="field-tip">天；默认统计近 7 天，首次发现地址不计为更换。</span></el-form-item>
-              <p v-if="telegramStatus" class="field-tip">机器人状态：{{telegramStates[telegramStatus.state]||telegramStatus.state}} <span v-if="telegramStatus.username">· @{{telegramStatus.username}}</span> {{telegramStatus.error||''}}</p>
-              <el-button :loading="busy" @click="run(refreshTelegram)">刷新机器人状态</el-button><el-button :loading="busy" :disabled="!form.telegram.token.trim()||!telegramChats.trim()" @click="sendTelegramTest">发送测试消息</el-button><p class="field-tip">使用当前填写的密钥和通知目标，无需先保存或启用 Bot。测试消息只包含 Chat ID、聊天类型和测试时间。</p>
-              <div v-if="telegramTest" class="field-tip"><p v-for="result in telegramTest.results" :key="result.chat_id">{{result.chat_id}}{{result.current_chat_id&&result.current_chat_id!==result.chat_id?' → '+result.current_chat_id:''}} · {{result.sent?'发送成功':result.error}}</p>
+              <div class="layout-stack">
+                <p v-if="telegramStatus" class="field-tip">机器人状态：{{telegramStates[telegramStatus.state]||telegramStatus.state}} <span v-if="telegramStatus.username">· @{{telegramStatus.username}}</span> {{telegramStatus.error||''}}</p>
+                <div class="layout-actions"><el-button :loading="busy" @click="run(refreshTelegram)">刷新机器人状态</el-button><el-button :loading="busy" :disabled="!form.telegram.token.trim()||!telegramChats.trim()" @click="sendTelegramTest">发送测试消息</el-button></div>
+                <p class="field-tip">使用当前填写的密钥和通知目标，无需先保存或启用 Bot。测试消息只包含 Chat ID、聊天类型和测试时间。</p>
+                <div v-if="telegramTest" class="field-tip"><p v-for="result in telegramTest.results" :key="result.chat_id">{{result.chat_id}}{{result.current_chat_id&&result.current_chat_id!==result.chat_id?' → '+result.current_chat_id:''}} · {{result.sent?'发送成功':result.error}}</p></div>
               </div>
             </el-form>
           </div>
         </el-tab-pane>
         <el-tab-pane label="安全与 API" name="security">
-          <div class="section-body settings-form">
+          <div class="section-body settings-form layout-stack">
             <el-form label-position="top" @submit.prevent="save">
               <div class="form-section-title">转发安全</div>
               <el-form-item label="PROXY Protocol 信任来源"><el-input v-model="proxyTrustText" type="textarea" :rows="4" placeholder="每行一个 CIDR，例如 192.0.2.10/32" /><span class="field-tip">只信任这些来源提供的客户端 IP；留空禁止规则接收 PROXY Protocol。仅管理员可以修改。</span></el-form-item>
@@ -164,9 +166,12 @@ async function copyKey(){try{await copyText(shownKey.value);ElMessage.success('�
               </el-form-item>
               <el-form-item label="禁止转发的目标 IP 网段"><el-input v-model="targetDenyText" type="textarea" :rows="10" placeholder="每行一个 IPv4 / IPv6 CIDR" /><span class="field-tip">直转和隧道出口均检查实际解析后的 IP。默认禁止本机、内网、链路本地、组播、云 metadata 等特殊地址；需要内网转发时移除对应网段，留空允许全部目标。旧节点须升级后才能执行这些限制。</span></el-form-item>
             </el-form>
-            <div class="form-section-title api-key-section">管理 API 密钥</div>
-            <p class="subtle">{{hasKey?'已配置管理 API 密钥。原值不会再次显示。':'尚未配置管理 API 密钥。'}}此密钥用于自动化管理接口，不是节点密钥，也不会包含在节点安装命令中。</p>
-            <el-input v-model="customKey" type="password" show-password autocomplete="new-password" placeholder="可填写 32–256 字符自定义密钥，留空自动生成" /><div class="admin-actions settings-key-actions"><el-button :loading="busy" @click="key">{{hasKey?'更新管理 API 密钥':'生成管理 API 密钥'}}</el-button><el-button v-if="hasKey" type="danger" plain :loading="busy" @click="revoke">撤销密钥</el-button></div>
+            <div class="layout-stack settings-api">
+              <div class="form-section-title">管理 API 密钥</div>
+              <p class="subtle">{{hasKey?'已配置管理 API 密钥。原值不会再次显示。':'尚未配置管理 API 密钥。'}}此密钥用于自动化管理接口，不是节点密钥，也不会包含在节点安装命令中。</p>
+              <el-input v-model="customKey" type="password" show-password autocomplete="new-password" placeholder="可填写 32–256 字符自定义密钥，留空自动生成" />
+              <div class="layout-actions"><el-button :loading="busy" @click="key">{{hasKey?'更新管理 API 密钥':'生成管理 API 密钥'}}</el-button><el-button v-if="hasKey" type="danger" plain :loading="busy" @click="revoke">撤销密钥</el-button></div>
+            </div>
           </div>
         </el-tab-pane>
         <el-tab-pane label="节点安装" name="installation">
@@ -185,15 +190,18 @@ async function copyKey(){try{await copyText(shownKey.value);ElMessage.success('�
           <div class="section-body settings-form">
             <el-form label-position="top" @submit.prevent="save">
               <div class="form-section-title">软件更新</div>
-              <el-button :loading="checkingUpdate" @click="checkUpdate">检查更新</el-button><el-button type="primary" :loading="submittingUpdate||updating" :disabled="!panelStatus?.supported||updating" @click="updatePanel">立即更新</el-button><p v-if="panelStatus?.task" class="field-tip">{{updateText[panelStatus.task.state]||panelStatus.task.state}} · {{panelStatus.task.version}} {{panelStatus.task.error||''}}</p>
-              <p v-if="panelStatus&&!panelStatus.supported" class="field-tip">更新暂不可用，请检查服务状态。更新组件随软件安装和升级自动部署。</p>
-              <p v-if="updateInfo" class="field-tip">当前主控 {{updateInfo.current_version}} · 最新版本 <a :href="updateInfo.latest.url" target="_blank" rel="noopener">{{updateInfo.latest.version}}</a> · {{updateInfo.update_available?'有可用更新':'已是最新版本'}}。点击「立即更新」升级面板，更新时会短暂重启；节点更新在节点管理操作。</p>
+              <div class="layout-stack">
+                <div class="layout-actions"><el-button :loading="checkingUpdate" @click="checkUpdate">检查更新</el-button><el-button type="primary" :loading="submittingUpdate||updating" :disabled="!panelStatus?.supported||updating" @click="updatePanel">立即更新</el-button></div>
+                <p v-if="panelStatus?.task" class="field-tip">{{updateText[panelStatus.task.state]||panelStatus.task.state}} · {{panelStatus.task.version}} {{panelStatus.task.error||''}}</p>
+                <p v-if="panelStatus&&!panelStatus.supported" class="field-tip">更新暂不可用，请检查服务状态。更新组件随软件安装和升级自动部署。</p>
+                <p v-if="updateInfo" class="field-tip">当前主控 {{updateInfo.current_version}} · 最新版本 <a :href="updateInfo.latest.url" target="_blank" rel="noopener">{{updateInfo.latest.version}}</a> · {{updateInfo.update_available?'有可用更新':'已是最新版本'}}。点击「立即更新」升级面板，更新时会短暂重启；节点更新在节点管理操作。</p>
+              </div>
             </el-form>
           </div>
         </el-tab-pane>
       </el-tabs>
     </section>
-    <el-dialog v-model="keyDialog" title="保存管理 API 密钥" width="600px" @closed="shownKey=''" ><p>只显示这一次，请保存到自己的密钥管理工具中。</p>
+    <el-dialog v-model="keyDialog" title="保存管理 API 密钥" width="600px" class="managed-form-dialog" @closed="shownKey=''"><p>只显示这一次，请保存到自己的密钥管理工具中。</p>
     <el-input :model-value="shownKey" type="textarea" :rows="3" readonly /><template #footer><el-button type="primary" @click="copyKey">复制密钥</el-button></template></el-dialog>
   </PageShell>
 </template>
@@ -201,15 +209,15 @@ async function copyKey(){try{await copyText(shownKey.value);ElMessage.success('�
 <style scoped>
 .settings-tabs :deep(.el-tabs__header) {
   margin: 0;
-  padding: 12px 24px;
+  padding: var(--layout-action-gap) var(--layout-inset);
   border-bottom: 1px solid var(--border);
 }
 .settings-tabs :deep(.el-tabs__nav-wrap::after),
 .settings-tabs :deep(.el-tabs__active-bar) { display: none; }
 .settings-tabs :deep(.el-tabs__item) {
-  height: 38px;
-  padding: 0 16px !important;
-  border-radius: 12px;
+  height: 36px;
+  padding: 0 12px !important;
+  border-radius: 6px;
   font-weight: 500;
   transition: background-color .2s, color .2s;
 }
@@ -219,10 +227,8 @@ async function copyKey(){try{await copyText(shownKey.value);ElMessage.success('�
   color: var(--el-color-primary);
 }
 .settings-tabs :deep(.el-tabs__nav-prev),
-.settings-tabs :deep(.el-tabs__nav-next) { line-height: 38px; }
-@media (max-width: 600px) {
-  .settings-tabs :deep(.el-tabs__header) { padding: 10px 14px; }
-  .settings-tabs :deep(.el-tabs__item) { padding: 0 13px !important; }
-  .settings-form { padding: 18px 16px; }
-}
+.settings-tabs :deep(.el-tabs__nav-next) { line-height: 36px; }
+.settings-address { width: 100%; }
+.settings-address .el-input { flex: 1 1 240px; min-width: 0; }
+.settings-api .form-section-title { margin: 0; }
 </style>

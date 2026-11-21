@@ -153,6 +153,16 @@ def extract_panel(package, stage):
             target.chmod(0o755 if path.parts[0] == 'bin' else 0o644)
 
 
+def install_tool(source, target):
+    directory = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        fcntl.flock(directory, fcntl.LOCK_EX)
+        shutil.copy2(source, target)
+        target.chmod(0o755)
+    finally:
+        os.close(directory)
+
+
 def setup_panel_update(service):
     if service.startswith('nekopass-agent'):
         raise ValueError('Panel service required')
@@ -310,8 +320,7 @@ def update(service, version, download_base=BASE):
                     source = stage / 'bin' / name
                     if source.is_file():
                         target = pathlib.Path('/usr/local/bin/nekopassctl') if name == 'nekopassctl' else base / 'bin' / name
-                        shutil.copy2(source, target)
-                        target.chmod(0o755)
+                        install_tool(source, target)
                 run([str(base / 'bin/nekopass-update'), '--service', service, '--setup-panel'])
             if active:
                 run(['systemctl', 'start', service])
