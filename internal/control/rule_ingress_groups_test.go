@@ -58,6 +58,61 @@ func groupRuleList(t *testing.T, f *securityFixture) []map[string]any {
 	return rules
 }
 
+func TestRuleUsageBatchKeepsCumulativeTotals(t *testing.T) {
+	f, group, nodes := groupRuleFixture(t, 2)
+	ctx := context.Background()
+	first := ruleResultID(t, f, groupInput(group))
+	second := ruleResultID(t, f, groupInput(group))
+	stream := &StreamServer{Server: f.s}
+	instances := []string{Secret(), Secret()}
+	report := func(node int, usage ...*pb.RuleUsage) error {
+		_, err := stream.exchange(ctx, f.p, nodes[node], &pb.AgentMessage{
+			ProtocolVersion: 26, InstanceId: instances[node], RuleUsage: usage,
+		})
+		return err
+	}
+	batch := []*pb.RuleUsage{
+		{RuleId: first, Traffic: 30},
+		{RuleId: second, Traffic: 70},
+		{RuleId: first, Traffic: 100},
+		{RuleId: first, Traffic: 60},
+		{RuleId: -1, Traffic: 500},
+	}
+	for range 2 {
+		if err := report(0, batch...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := report(0, &pb.RuleUsage{RuleId: first, Traffic: 120}, &pb.RuleUsage{RuleId: second, Traffic: 60}); err != nil {
+		t.Fatal(err)
+	}
+	if err := report(1, &pb.RuleUsage{RuleId: first, Traffic: 40}); err != nil {
+		t.Fatal(err)
+	}
+	if err := report(0, &pb.RuleUsage{RuleId: first, Traffic: 130}, &pb.RuleUsage{RuleId: second, Traffic: -1}); err == nil {
+		t.Fatal("accepted a negative rule counter")
+	}
+	for _, want := range []struct {
+		nodeID, ruleID, traffic, events int64
+	}{
+		{nodes[0], first, 120, 2},
+		{nodes[0], second, 70, 1},
+		{nodes[1], first, 40, 1},
+		{nodes[1], second, 0, 0},
+	} {
+		var total, sum, count int64
+		if err := f.p.QueryRow(ctx, "SELECT traffic FROM rule_usage WHERE node_id=$1 AND rule_id=$2", want.nodeID, want.ruleID).Scan(&total); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.p.QueryRow(ctx, "SELECT COALESCE(sum(traffic_bytes),0)::bigint,count(*) FROM rule_events WHERE node_id=$1 AND rule_id=$2 AND user_id=$3", want.nodeID, want.ruleID, f.user).Scan(&sum, &count); err != nil {
+			t.Fatal(err)
+		}
+		if total != want.traffic || sum != want.traffic || count != want.events {
+			t.Fatalf("node %d rule %d: ledger=%d events=%d sum=%d, want traffic=%d events=%d", want.nodeID, want.ruleID, total, count, sum, want.traffic, want.events)
+		}
+	}
+}
+
 func TestGroupRuleFansOutCountsOnceAndTracksMembers(t *testing.T) {
 	f, group, nodes := groupRuleFixture(t, 6)
 	ctx := context.Background()

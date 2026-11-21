@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"math"
@@ -73,21 +74,45 @@ func (s *State) Config() (*pb.ControlMessage, error) {
 	})
 	return c, e
 }
-func (s *State) SaveConfig(c *pb.ControlMessage) error {
-	saved := proto.Clone(c).(*pb.ControlMessage)
-	saved.StateRestore = nil
-	data, e := proto.Marshal(saved)
-	if e != nil {
-		return e
+
+// bbolt writes transaction metadata on commit even when no records change.
+var errStateUnchanged = errors.New("state unchanged")
+
+func (s *State) updateIfChanged(update func(*bolt.Tx) error) error {
+	err := s.db.Update(update)
+	if err == errStateUnchanged {
+		return nil
 	}
-	return s.db.Update(func(tx *bolt.Tx) error {
+	return err
+}
+
+func (s *State) SaveConfig(c *pb.ControlMessage) error {
+	saved := c
+	if c.StateRestore != nil {
+		saved = proto.Clone(c).(*pb.ControlMessage)
+		saved.StateRestore = nil
+	}
+	data, err := proto.Marshal(saved)
+	if err != nil {
+		return err
+	}
+	return s.updateIfChanged(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("meta"))
-		if c.Node != nil || len(c.Users) > 0 || len(c.Rules) > 0 {
-			if err := b.Delete([]byte("restore_pending")); err != nil {
+		restoreKey := []byte("restore_pending")
+		clearRestore := (c.Node != nil || len(c.Users) > 0 || len(c.Rules) > 0) && b.Get(restoreKey) != nil
+		if clearRestore {
+			if err := b.Delete(restoreKey); err != nil {
 				return err
 			}
 		}
-		return b.Put([]byte("config"), data)
+		configKey := []byte("config")
+		if old := b.Get(configKey); old != nil && bytes.Equal(old, data) {
+			if clearRestore {
+				return nil
+			}
+			return errStateUnchanged
+		}
+		return b.Put(configKey, data)
 	})
 }
 func (s *State) LoadUsers() (map[int64]DiskUser, error) {
@@ -196,32 +221,43 @@ func (s *State) Checkpoint(users map[int64]DiskUser, rules map[int64]int64) erro
 	return s.checkpoint(users, rules, nil)
 }
 func (s *State) checkpoint(users map[int64]DiskUser, rules map[int64]int64, retired map[string]DiskUser) error {
-	return s.db.Update(func(tx *bolt.Tx) error {
+	return s.updateIfChanged(func(tx *bolt.Tx) error {
+		changed := false
+		put := func(b *bolt.Bucket, key, data []byte) error {
+			if old := b.Get(key); old != nil && bytes.Equal(old, data) {
+				return nil
+			}
+			changed = true
+			return b.Put(key, data)
+		}
 		b := tx.Bucket([]byte("users"))
 		for id, d := range users {
-			data, e := json.Marshal(d)
-			if e != nil {
-				return e
+			data, err := json.Marshal(d)
+			if err != nil {
+				return err
 			}
-			if e = b.Put([]byte(strconv.FormatInt(id, 10)), data); e != nil {
-				return e
+			if err = put(b, []byte(strconv.FormatInt(id, 10)), data); err != nil {
+				return err
 			}
 		}
 		b = tx.Bucket([]byte("rules"))
 		for id, n := range rules {
-			if e := b.Put([]byte(strconv.FormatInt(id, 10)), []byte(strconv.FormatInt(n, 10))); e != nil {
-				return e
+			if err := put(b, []byte(strconv.FormatInt(id, 10)), []byte(strconv.FormatInt(n, 10))); err != nil {
+				return err
 			}
 		}
 		b = tx.Bucket([]byte("retired_users"))
 		for key, d := range retired {
-			data, e := json.Marshal(d)
-			if e != nil {
-				return e
+			data, err := json.Marshal(d)
+			if err != nil {
+				return err
 			}
-			if e = b.Put([]byte(key), data); e != nil {
-				return e
+			if err = put(b, []byte(key), data); err != nil {
+				return err
 			}
+		}
+		if !changed {
+			return errStateUnchanged
 		}
 		return nil
 	})

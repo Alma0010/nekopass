@@ -16,7 +16,21 @@ function ready(n:ProbeNode,flag:keyof Probe){return n.online&&n.enabled&&!!n.met
 function percent(used?:number,total?:number){return total?Math.max(0,Math.min(100,Number(used||0)/total*100)):0}
 function decimal(n?:number){return Number(n||0).toFixed(2)}
 function io(n?:number){return Number(n||0)>=1e9?`${decimal(Number(n)/1e9)} GB/s`:`${decimal(Number(n||0)/1e6)} MB/s`}
-function stamp(value?:string|null){return value?new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'—'}
+const probeTimestampFormatter=new Intl.DateTimeFormat('zh-CN',{
+ timeZone:'Asia/Shanghai',
+ hour12:false,
+ year:'numeric',
+ month:'numeric',
+ day:'numeric',
+ hour:'numeric',
+ minute:'numeric',
+ second:'numeric',
+})
+function stamp(value?:string|null){
+ if(!value)return '—'
+ const date=new Date(value)
+ return Number.isNaN(date.getTime())?date.toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):probeTimestampFormatter.format(date)
+}
 function uptime(n:ProbeNode){
  if(!n.uptime_ready)return '—'
  const age=n.online&&n.updated_at?Math.max(0,Math.floor((now.value-Date.parse(n.updated_at))/1000)):0

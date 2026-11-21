@@ -191,26 +191,8 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 			}
 		}
 	}
-	for _, u := range r.RuleUsage {
-		if u.Traffic < 0 {
-			return nil, errors.New("negative rule usage")
-		}
-		var before, owner int64
-		e = tx.QueryRow(ctx, "SELECT traffic,user_id FROM rule_usage WHERE node_id=$1 AND rule_id=$2 FOR UPDATE", nodeID, u.RuleId).Scan(&before, &owner)
-		if errors.Is(e, pgx.ErrNoRows) {
-			continue
-		}
-		if e != nil {
-			return nil, e
-		}
-		if u.Traffic > before {
-			if _, e = tx.Exec(ctx, "UPDATE rule_usage SET traffic=$3 WHERE node_id=$1 AND rule_id=$2", nodeID, u.RuleId, u.Traffic); e != nil {
-				return nil, e
-			}
-			if _, e = tx.Exec(ctx, "INSERT INTO rule_events(node_id,rule_id,user_id,traffic_bytes) VALUES($1,$2,$3,$4)", nodeID, u.RuleId, owner, u.Traffic-before); e != nil {
-				return nil, e
-			}
-		}
+	if e = recordRuleUsage(ctx, tx, nodeID, r.RuleUsage); e != nil {
+		return nil, e
 	}
 	// Every allocator locks the user row first. Concurrent nodes cannot over-allocate its quota.
 	sort.Slice(r.RequestUsers, func(i, j int) bool { return r.RequestUsers[i] < r.RequestUsers[j] })
@@ -557,6 +539,43 @@ func (s *StreamServer) exchangeWithCredential(ctx context.Context, conn interfac
 	}
 	return out, nil
 }
+func recordRuleUsage(ctx context.Context, tx pgx.Tx, nodeID int64, usage []*pb.RuleUsage) error {
+	if len(usage) == 0 {
+		return nil
+	}
+	ruleIDs := make([]int64, len(usage))
+	traffic := make([]int64, len(usage))
+	for i, entry := range usage {
+		if entry.Traffic < 0 {
+			return errors.New("negative rule usage")
+		}
+		ruleIDs[i], traffic[i] = entry.RuleId, entry.Traffic
+	}
+	// Only lock growing counters. Update the ledger and record their deltas
+	// together so a retry cannot count the same traffic twice.
+	_, err := tx.Exec(ctx, `
+WITH reported AS (
+	SELECT rule_id, max(traffic) AS traffic
+	FROM unnest($2::bigint[], $3::bigint[]) AS counters(rule_id, traffic)
+	GROUP BY rule_id
+), increased AS (
+	SELECT ledger.rule_id, ledger.traffic AS previous_traffic, reported.traffic
+	FROM rule_usage ledger
+	JOIN reported USING (rule_id)
+	WHERE ledger.node_id=$1 AND reported.traffic > ledger.traffic
+	ORDER BY ledger.rule_id
+	FOR UPDATE OF ledger
+), updated AS (
+	UPDATE rule_usage ledger SET traffic=increased.traffic
+	FROM increased
+	WHERE ledger.node_id=$1 AND ledger.rule_id=increased.rule_id
+	RETURNING ledger.rule_id, ledger.user_id, ledger.traffic-increased.previous_traffic AS delta
+)
+INSERT INTO rule_events(node_id,rule_id,user_id,traffic_bytes)
+SELECT $1, rule_id, user_id, delta FROM updated`, nodeID, ruleIDs, traffic)
+	return err
+}
+
 func truncate(s string, n int) string {
 	if len(s) > n {
 		return s[:n]
