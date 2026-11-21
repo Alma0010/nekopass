@@ -6,10 +6,11 @@ import PageShell from '../PageShell.vue'
 import {usePage} from '../page'
 import {api} from '../api'
 import {loadSite} from '../site'
+import {withFeatureDefaults,type SiteFeatures} from '../features'
 type SMTP={host:string;port:number;security:string;username:string;password:string;from:string;from_name:string}
 type TelegramSettings={enabled:boolean;token:string;admin_ids:number[];notification_chat_ids:number[];statistics_days:number}
-type Settings={telegram:TelegramSettings;registration_email_verification:boolean;force_invite:boolean;terms_url:string;privacy_url:string;registration_enabled:boolean;captcha_mode:string;smtp:SMTP;referral_enabled:boolean;referral_mode:string;referral_rate:string;site_name:string;panel_url:string;agent_host:string;agent_port:number;agent_transport:string;installer_url:string;release_base_url:string;agent_version:string;install_token_minutes:number;proxy_trusted_cidrs:string[];proxy_nyanpass_compat:boolean;target_deny_cidrs:string[]}
-const form=reactive<Settings>({telegram:{enabled:false,token:'',admin_ids:[],notification_chat_ids:[],statistics_days:7},registration_email_verification:true,force_invite:false,terms_url:'',privacy_url:'',registration_enabled:false,captcha_mode:'image',smtp:{host:'',port:587,security:'starttls',username:'',password:'',from:'',from_name:''},referral_enabled:false,referral_mode:'first',referral_rate:'15',site_name:'Nekopass',panel_url:'',agent_host:'',agent_port:9443,agent_transport:'tls',installer_url:'https://github.com/Alma0010/nekopass/releases/latest/download/install-agent.sh',release_base_url:'https://github.com/Alma0010/nekopass/releases/download',agent_version:'latest',install_token_minutes:30,proxy_trusted_cidrs:[],proxy_nyanpass_compat:false,target_deny_cidrs:[]})
+type Settings={features:SiteFeatures;telegram:TelegramSettings;registration_email_verification:boolean;force_invite:boolean;terms_url:string;privacy_url:string;registration_enabled:boolean;captcha_mode:string;smtp:SMTP;referral_enabled:boolean;referral_mode:string;referral_rate:string;site_name:string;panel_url:string;agent_host:string;agent_port:number;agent_transport:string;installer_url:string;release_base_url:string;agent_version:string;install_token_minutes:number;proxy_trusted_cidrs:string[];proxy_nyanpass_compat:boolean;target_deny_cidrs:string[]}
+const form=reactive<Settings>({features:withFeatureDefaults(),telegram:{enabled:false,token:'',admin_ids:[],notification_chat_ids:[],statistics_days:7},registration_email_verification:true,force_invite:false,terms_url:'',privacy_url:'',registration_enabled:false,captcha_mode:'image',smtp:{host:'',port:587,security:'starttls',username:'',password:'',from:'',from_name:''},referral_enabled:false,referral_mode:'first',referral_rate:'15',site_name:'Nekopass',panel_url:'',agent_host:'',agent_port:9443,agent_transport:'tls',installer_url:'https://github.com/Alma0010/nekopass/releases/latest/download/install-agent.sh',release_base_url:'https://github.com/Alma0010/nekopass/releases/download',agent_version:'latest',install_token_minutes:30,proxy_trusted_cidrs:[],proxy_nyanpass_compat:false,target_deny_cidrs:[]})
 watch(()=>form.referral_enabled,value=>{if(!value)form.force_invite=false})
 const proxyTrustText=ref(''),targetDenyText=ref(''),telegramAdmins=ref(''),telegramChats=ref('')
 const telegramStatus=ref<{state:string;username?:string;error?:string}|null>(null)
@@ -50,7 +51,7 @@ type TelegramTest={sent:number;failed:number;results:{chat_id:number;current_cha
 const telegramTest=ref<TelegramTest|null>(null)
 async function sendTelegramTest(){await run(async()=>{telegramTest.value=null;telegramTest.value=await api<TelegramTest>('admin/settings/telegram/test','POST',{telegram:{...form.telegram,admin_ids:telegramIDs(telegramAdmins.value,true),notification_chat_ids:telegramIDs(telegramChats.value,false)}});const result=telegramTest.value;if(result.failed)ElMessage.warning(`测试完成：成功 ${result.sent} 个，失败 ${result.failed} 个`);else ElMessage.success(`测试消息已发送至 ${result.sent} 个目标`)})}
 async function refreshTelegram(){const data=await api<{telegram_status:NonNullable<typeof telegramStatus.value>}>('admin/settings');telegramStatus.value=data.telegram_status}
-async function loadSettings(){const data=await api<{settings:Settings;api_key_configured:boolean;agent_listener:{address:string;mode:string}|null;telegram_status:{state:string;username?:string;error?:string}}>('admin/settings');Object.assign(form,data.settings);proxyTrustText.value=(form.proxy_trusted_cidrs||[]).join('\n');targetDenyText.value=(form.target_deny_cidrs||[]).join('\n');hasKey.value=data.api_key_configured;listener.value=data.agent_listener;telegramAdmins.value=(form.telegram.admin_ids||[]).join('\n');telegramChats.value=(form.telegram.notification_chat_ids||[]).join('\n');telegramStatus.value=data.telegram_status}
+async function loadSettings(){const data=await api<{settings:Settings;api_key_configured:boolean;agent_listener:{address:string;mode:string}|null;telegram_status:{state:string;username?:string;error?:string}}>('admin/settings');Object.assign(form,data.settings,{features:withFeatureDefaults(data.settings.features)});proxyTrustText.value=(form.proxy_trusted_cidrs||[]).join('\n');targetDenyText.value=(form.target_deny_cidrs||[]).join('\n');hasKey.value=data.api_key_configured;listener.value=data.agent_listener;telegramAdmins.value=(form.telegram.admin_ids||[]).join('\n');telegramChats.value=(form.telegram.notification_chat_ids||[]).join('\n');telegramStatus.value=data.telegram_status}
 const {me,loading,error,busy,run}=usePage(async()=>{await loadSettings();await pollPanelUpdate()},{admin:true})
 function currentAddress(){form.panel_url=location.origin;form.agent_host=location.hostname.replace(/^\[|\]$/g,'')}
 async function save(){await run(async()=>{await api('admin/settings','PUT',{...form,telegram:{...form.telegram,admin_ids:telegramIDs(telegramAdmins.value,true),notification_chat_ids:telegramIDs(telegramChats.value,false)},proxy_trusted_cidrs:cidrs(proxyTrustText.value),target_deny_cidrs:cidrs(targetDenyText.value)});await loadSettings();await loadSite();ElMessage.success('系统设置已保存')})}
@@ -82,20 +83,32 @@ async function copyKey(){try{await copyText(shownKey.value);ElMessage.success('�
             </el-form>
           </div>
         </el-tab-pane>
-        <el-tab-pane label="用户注册" name="registration">
+        <el-tab-pane label="功能开关" name="features">
           <div class="section-body settings-form">
             <el-form label-position="top" @submit.prevent="save">
-              <div class="form-section-title">用户注册</div>
-              <el-form-item label="开放注册"><el-switch v-model="form.registration_enabled"/><span class="field-tip">关闭后仅管理员可以创建用户。</span></el-form-item>
-              <el-form-item label="注册邮件验证"><el-switch v-model="form.registration_email_verification"/><span class="field-tip">开启时须配置 SMTP 并验证邮箱；关闭后注册无需邮件验证码，人机验证仍按注册设置执行。</span></el-form-item>
-              <el-form-item label="强制邀请注册"><el-switch v-model="form.force_invite" :disabled="!form.referral_enabled"/><span class="field-tip">须先开启邀请返利。开启后必须填写有效的老用户邀请码。</span></el-form-item>
-              <el-form-item label="用户条款 URL"><el-input v-model="form.terms_url" placeholder="https://example.com/terms"/></el-form-item>
-              <el-form-item label="隐私条款 URL"><el-input v-model="form.privacy_url" placeholder="https://example.com/privacy"/></el-form-item>
-              <el-form-item label="人机验证方式"><el-select v-model="form.captcha_mode"><el-option label="关闭" value="off"/><el-option label="图形验证码" value="image"/></el-select><span class="field-tip">注册与创建工单共用此设置。</span></el-form-item>
+              <el-form-item label="商用功能"><el-switch v-model="form.features.commerce"/><span class="field-tip">商城、钱包充值、订单、支付方式和自动续费。</span></el-form-item>
+              <el-form-item label="邀请功能"><el-switch v-model="form.features.invites"/><span class="field-tip">邀请码、邀请注册和返利。</span></el-form-item>
+              <el-form-item label="工单功能"><el-switch v-model="form.features.tickets"/><span class="field-tip">用户工单和后台工单管理。</span></el-form-item>
+              <el-form-item label="用户端"><el-switch v-model="form.features.users"/><span class="field-tip">关闭后仅管理员可以登录，已有转发继续运行。</span></el-form-item>
             </el-form>
           </div>
         </el-tab-pane>
-        <el-tab-pane label="邮件服务" name="mail">
+        <el-tab-pane v-if="form.features.users || form.features.tickets" :label="form.features.users ? '用户注册' : '人机验证'" name="registration">
+          <div class="section-body settings-form">
+            <el-form label-position="top" @submit.prevent="save">
+              <template v-if="form.features.users">
+              <div class="form-section-title">用户注册</div>
+              <el-form-item label="开放注册"><el-switch v-model="form.registration_enabled"/><span class="field-tip">关闭后仅管理员可以创建用户。</span></el-form-item>
+              <el-form-item label="注册邮件验证"><el-switch v-model="form.registration_email_verification"/><span class="field-tip">开启时须配置 SMTP 并验证邮箱；关闭后注册无需邮件验证码，人机验证仍按注册设置执行。</span></el-form-item>
+              <el-form-item v-if="form.features.invites" label="强制邀请注册"><el-switch v-model="form.force_invite" :disabled="!form.referral_enabled"/><span class="field-tip">须先开启邀请返利。开启后必须填写有效的老用户邀请码。</span></el-form-item>
+              <el-form-item label="用户条款 URL"><el-input v-model="form.terms_url" placeholder="https://example.com/terms"/></el-form-item>
+              <el-form-item label="隐私条款 URL"><el-input v-model="form.privacy_url" placeholder="https://example.com/privacy"/></el-form-item>
+              </template>
+              <el-form-item label="人机验证方式"><el-select v-model="form.captcha_mode"><el-option label="关闭" value="off"/><el-option label="图形验证码" value="image"/></el-select><span v-if="form.features.users && form.features.tickets" class="field-tip">注册与创建工单共用此设置。</span></el-form-item>
+            </el-form>
+          </div>
+        </el-tab-pane>
+        <el-tab-pane v-if="form.features.users" label="邮件服务" name="mail">
           <div class="section-body settings-form">
             <el-form label-position="top" @submit.prevent="save">
               <div class="form-section-title">SMTP 邮件服务</div>
@@ -110,7 +123,7 @@ async function copyKey(){try{await copyText(shownKey.value);ElMessage.success('�
             </el-form>
           </div>
         </el-tab-pane>
-        <el-tab-pane label="邀请返利" name="referral">
+        <el-tab-pane v-if="form.features.invites" label="邀请返利" name="referral">
           <div class="section-body settings-form">
             <el-form label-position="top" @submit.prevent="save">
               <div class="form-section-title">邀请返利</div>

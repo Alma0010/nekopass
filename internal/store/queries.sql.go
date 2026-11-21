@@ -88,13 +88,15 @@ func (q *Queries) FindNodeByToken(ctx context.Context, tokenHash string) (Node, 
 }
 
 const findSession = `-- name: FindSession :one
-SELECT u.id, u.username, u.password_hash, u.is_admin, u.enabled, u.created_at, u.plan_id, u.plan_started_at, u.subscription_managed, u.subscription_expires_at, u.next_reset_at, u.reset_anchor_at, u.reset_index, u.quota_epoch, u.speed_bps, u.quota_bytes, u.max_rules, u.max_connections, u.ip_limit, u.rule_speed_bps, u.rule_ip_limit, u.rule_connection_limit, u.resource_expires_at, u.traffic_base_bytes, u.resources_revision, u.actual_traffic_base_bytes, u.auto_renew_enabled, u.auto_renew_cycle, u.auto_renew_price_cents, u.auto_renew_status, u.auto_renew_error, u.auto_renew_next_attempt, u.auto_renew_last_attempt, u.auto_renew_last_success,s.cookie_renewed_at FROM users u JOIN sessions s ON s.user_id=u.id
+SELECT u.id, u.username, u.password_hash, u.is_admin, u.enabled, u.created_at, u.plan_id, u.plan_started_at, u.subscription_managed, u.subscription_expires_at, u.next_reset_at, u.reset_anchor_at, u.reset_index, u.quota_epoch, u.speed_bps, u.quota_bytes, u.max_rules, u.max_connections, u.ip_limit, u.rule_speed_bps, u.rule_ip_limit, u.rule_connection_limit, u.resource_expires_at, u.traffic_base_bytes, u.resources_revision, u.actual_traffic_base_bytes, u.auto_renew_enabled, u.auto_renew_cycle, u.auto_renew_price_cents, u.auto_renew_status, u.auto_renew_error, u.auto_renew_next_attempt, u.auto_renew_last_attempt, u.auto_renew_last_success,s.cookie_renewed_at,COALESCE((SELECT config->'features' FROM site_settings WHERE id=1),'{}'::jsonb)::jsonb AS features
+FROM users u JOIN sessions s ON s.user_id=u.id
 WHERE s.token_hash=$1 AND (s.expires_at IS NULL OR s.expires_at>now())
 `
 
 type FindSessionRow struct {
 	User            User               `json:"user"`
 	CookieRenewedAt pgtype.Timestamptz `json:"cookie_renewed_at"`
+	Features        []byte             `json:"features"`
 }
 
 func (q *Queries) FindSession(ctx context.Context, tokenHash string) (FindSessionRow, error) {
@@ -136,6 +138,7 @@ func (q *Queries) FindSession(ctx context.Context, tokenHash string) (FindSessio
 		&i.User.AutoRenewLastAttempt,
 		&i.User.AutoRenewLastSuccess,
 		&i.CookieRenewedAt,
+		&i.Features,
 	)
 	return i, err
 }

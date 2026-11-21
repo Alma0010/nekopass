@@ -15,13 +15,18 @@ import (
 
 func formatID(id int64) string { return strconv.FormatInt(id, 10) }
 
+func (v SystemSettings) registrationOpen() bool { return v.Features.Users && v.RegistrationEnabled }
+func (v SystemSettings) inviteRequired() bool {
+	return v.Features.Invites && v.ForceInvite && v.ReferralEnabled
+}
+
 func (s *Server) registrationConfig(w http.ResponseWriter, r *http.Request) {
 	v, err := s.readSettings(r.Context())
 	if err != nil {
 		s.dbError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"enabled": v.RegistrationEnabled, "captcha_mode": v.CaptchaMode, "email_verification": v.RegistrationEmailVerification, "force_invite": v.ForceInvite && v.ReferralEnabled, "terms_url": v.TermsURL, "privacy_url": v.PrivacyURL})
+	writeJSON(w, 200, map[string]any{"enabled": v.registrationOpen(), "captcha_mode": v.CaptchaMode, "email_verification": v.RegistrationEmailVerification, "force_invite": v.inviteRequired(), "terms_url": v.TermsURL, "privacy_url": v.PrivacyURL})
 }
 
 func (s *Server) registrationSettings(w http.ResponseWriter, r *http.Request) (SystemSettings, bool) {
@@ -30,7 +35,7 @@ func (s *Server) registrationSettings(w http.ResponseWriter, r *http.Request) (S
 		s.dbError(w, err)
 		return v, false
 	}
-	if !v.RegistrationEnabled {
+	if !v.registrationOpen() {
 		fail(w, 403, "此站点未开放注册")
 		return v, false
 	}
@@ -76,7 +81,7 @@ func (s *Server) sendRegistrationCode(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "邀请码过长")
 		return
 	}
-	if v.ForceInvite && v.ReferralEnabled {
+	if v.inviteRequired() {
 		var valid bool
 		if err = s.Pool.QueryRow(r.Context(), "SELECT EXISTS(SELECT 1 FROM users WHERE invite_code=$1 AND enabled)", strings.TrimSpace(in.Invite)).Scan(&valid); err != nil {
 			s.dbError(w, err)
@@ -223,7 +228,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		s.dbError(w, err)
 		return
 	}
-	if !settings.RegistrationEnabled {
+	if !settings.registrationOpen() {
 		fail(w, 403, "此站点未开放注册")
 		return
 	}
@@ -258,7 +263,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var inviter *int64
-	if strings.TrimSpace(in.Invite) != "" {
+	if settings.Features.Invites && strings.TrimSpace(in.Invite) != "" {
 		var id int64
 		err = tx.QueryRow(r.Context(), "SELECT id FROM users WHERE invite_code=$1 AND enabled", strings.TrimSpace(in.Invite)).Scan(&id)
 		if err == nil {
@@ -268,7 +273,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if settings.ForceInvite && settings.ReferralEnabled && inviter == nil {
+	if settings.inviteRequired() && inviter == nil {
 		fail(w, 400, "本站仅允许邀请注册，请填写有效邀请码")
 		return
 	}

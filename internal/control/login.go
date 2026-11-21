@@ -16,7 +16,10 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var errLoginChanged = errors.New("login credentials changed during authentication")
+var (
+	errLoginChanged  = errors.New("login credentials changed during authentication")
+	errUsersDisabled = errors.New(usersDisabled)
+)
 
 // Unknown/disabled accounts still perform password work. This is a random,
 // unusable comparison hash, never an account or a default login credential.
@@ -72,15 +75,20 @@ func (s *Server) createLoginSession(ctx context.Context, user store.User, token 
 	}
 	defer tx.Rollback(ctx)
 	var id int64
+	var allowed bool
 	// Password reset/disable takes the same user row FOR UPDATE. Holding this
 	// share lock until session insertion commits makes both orderings safe:
 	// a reset first rejects old credentials; a reset later deletes the new session.
-	err = tx.QueryRow(ctx, "SELECT id FROM users WHERE id=$1 AND enabled AND password_hash=$2 FOR SHARE", user.ID, user.PasswordHash).Scan(&id)
+	err = tx.QueryRow(ctx, `SELECT id, is_admin OR COALESCE((SELECT (config#>>'{features,users}')::boolean FROM site_settings WHERE id=1),true)
+FROM users WHERE id=$1 AND enabled AND password_hash=$2 FOR SHARE`, user.ID, user.PasswordHash).Scan(&id, &allowed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errLoginChanged
 	}
 	if err != nil {
 		return err
+	}
+	if !allowed {
+		return errUsersDisabled
 	}
 	if _, err = tx.Exec(ctx, "INSERT INTO sessions(token_hash,user_id,expires_at,cookie_renewed_at) VALUES($1,$2,NULL,now())", Hash(token), id); err != nil {
 		return err

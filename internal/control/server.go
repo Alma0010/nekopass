@@ -127,6 +127,12 @@ func (s *Server) dbError(w http.ResponseWriter, e error) {
 
 func (s *Server) Handler(static http.Handler) http.Handler {
 	api := http.NewServeMux()
+	commerce := func(next http.HandlerFunc) http.HandlerFunc {
+		return requireModule(func(f ModuleFeatures) bool { return f.Commerce }, "此站点已关闭商用功能", next)
+	}
+	tickets := func(next http.HandlerFunc) http.HandlerFunc {
+		return requireModule(func(f ModuleFeatures) bool { return f.Tickets }, "此站点已关闭工单", next)
+	}
 	api.HandleFunc("GET /api/v1/me", func(w http.ResponseWriter, r *http.Request) {
 		u := current(r)
 		writeJSON(w, 200, map[string]any{"id": u.ID, "username": u.Username, "is_admin": u.IsAdmin})
@@ -154,34 +160,34 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 	api.HandleFunc("PUT /api/v1/admin/nodes/{id}/ddns", s.saveNodeDDNS)
 	api.HandleFunc("POST /api/v1/admin/nodes/{id}/ddns/run", s.runNodeDDNS)
 	api.HandleFunc("GET /api/v1/profile", s.profile)
-	api.HandleFunc("GET /api/v1/profile/auto-renew", s.autoRenew)
-	api.HandleFunc("PUT /api/v1/profile/auto-renew", s.saveAutoRenew)
-	api.HandleFunc("GET /api/v1/wallet", s.wallet)
-	api.HandleFunc("GET /api/v1/orders", s.orders)
-	api.HandleFunc("GET /api/v1/admin/orders", s.adminOrders)
-	api.HandleFunc("GET /api/v1/admin/orders/{id}", s.adminOrder)
+	api.HandleFunc("GET /api/v1/profile/auto-renew", commerce(s.autoRenew))
+	api.HandleFunc("PUT /api/v1/profile/auto-renew", commerce(s.saveAutoRenew))
+	api.HandleFunc("GET /api/v1/wallet", commerce(s.wallet))
+	api.HandleFunc("GET /api/v1/orders", commerce(s.orders))
+	api.HandleFunc("GET /api/v1/admin/orders", commerce(s.adminOrders))
+	api.HandleFunc("GET /api/v1/admin/orders/{id}", commerce(s.adminOrder))
 	api.HandleFunc("GET /api/v1/referrals", s.referrals)
-	api.HandleFunc("GET /api/v1/tickets/config", s.ticketConfig)
-	api.HandleFunc("GET /api/v1/tickets/captcha", s.ticketCaptcha)
-	api.HandleFunc("GET /api/v1/tickets", s.tickets)
-	api.HandleFunc("POST /api/v1/tickets", s.createTicket)
-	api.HandleFunc("GET /api/v1/tickets/{id}", s.ticket)
-	api.HandleFunc("POST /api/v1/tickets/{id}/messages", s.replyTicket)
-	api.HandleFunc("PUT /api/v1/tickets/{id}/status", s.ticketStatus)
-	api.HandleFunc("GET /api/v1/admin/tickets", s.tickets)
-	api.HandleFunc("GET /api/v1/admin/tickets/{id}", s.ticket)
-	api.HandleFunc("POST /api/v1/admin/tickets/{id}/messages", s.replyTicket)
-	api.HandleFunc("PUT /api/v1/admin/tickets/{id}/status", s.ticketStatus)
+	api.HandleFunc("GET /api/v1/tickets/config", tickets(s.ticketConfig))
+	api.HandleFunc("GET /api/v1/tickets/captcha", tickets(s.ticketCaptcha))
+	api.HandleFunc("GET /api/v1/tickets", tickets(s.tickets))
+	api.HandleFunc("POST /api/v1/tickets", tickets(s.createTicket))
+	api.HandleFunc("GET /api/v1/tickets/{id}", tickets(s.ticket))
+	api.HandleFunc("POST /api/v1/tickets/{id}/messages", tickets(s.replyTicket))
+	api.HandleFunc("PUT /api/v1/tickets/{id}/status", tickets(s.ticketStatus))
+	api.HandleFunc("GET /api/v1/admin/tickets", tickets(s.tickets))
+	api.HandleFunc("GET /api/v1/admin/tickets/{id}", tickets(s.ticket))
+	api.HandleFunc("POST /api/v1/admin/tickets/{id}/messages", tickets(s.replyTicket))
+	api.HandleFunc("PUT /api/v1/admin/tickets/{id}/status", tickets(s.ticketStatus))
 	api.HandleFunc("GET /api/v1/announcements", s.announcements)
 	api.HandleFunc("GET /api/v1/announcements/{id}", s.announcementDetail)
 	api.HandleFunc("GET /api/v1/admin/announcements", s.announcements)
 	api.HandleFunc("POST /api/v1/admin/announcements", s.saveNotice)
 	api.HandleFunc("PUT /api/v1/admin/announcements/{id}", s.saveNotice)
 	api.HandleFunc("DELETE /api/v1/admin/announcements/{id}", s.deleteNotice)
-	api.HandleFunc("GET /api/v1/shop/plans", s.shopPlans)
-	api.HandleFunc("POST /api/v1/shop/quote", s.shopQuote)
-	api.HandleFunc("POST /api/v1/shop/purchase", s.shopPurchase)
-	api.HandleFunc("POST /api/v1/admin/users/{id}/recharge", s.adminRecharge)
+	api.HandleFunc("GET /api/v1/shop/plans", commerce(s.shopPlans))
+	api.HandleFunc("POST /api/v1/shop/quote", commerce(s.shopQuote))
+	api.HandleFunc("POST /api/v1/shop/purchase", commerce(s.shopPurchase))
+	api.HandleFunc("POST /api/v1/admin/users/{id}/recharge", commerce(s.adminRecharge))
 	api.HandleFunc("GET /api/v1/admin/users", s.adminOnly(s.users))
 	api.HandleFunc("POST /api/v1/admin/users", s.saveUser)
 	api.HandleFunc("PUT /api/v1/admin/users/{id}", s.saveUser)
@@ -219,13 +225,13 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 	api.HandleFunc("GET /api/v1/node-status", s.nodeStatus)
 	api.HandleFunc("GET /api/v1/node-status/{id}/history", s.nodeProbeHistory)
 	api.HandleFunc("GET /api/v1/admin/plans", s.plans)
-	api.HandleFunc("GET /api/v1/admin/payment-interfaces", s.paymentInterfaces)
-	api.HandleFunc("GET /api/v1/admin/payment-methods", s.paymentMethods)
-	api.HandleFunc("POST /api/v1/admin/payment-methods", s.savePaymentMethod)
-	api.HandleFunc("PUT /api/v1/admin/payment-methods/{id}", s.savePaymentMethod)
-	api.HandleFunc("DELETE /api/v1/admin/payment-methods/{id}", s.deletePaymentMethod)
-	api.HandleFunc("POST /api/v1/wallet/recharge", s.createRecharge)
-	api.HandleFunc("POST /api/v1/orders/{id}/pay", s.payRechargeOrder)
+	api.HandleFunc("GET /api/v1/admin/payment-interfaces", commerce(s.paymentInterfaces))
+	api.HandleFunc("GET /api/v1/admin/payment-methods", commerce(s.paymentMethods))
+	api.HandleFunc("POST /api/v1/admin/payment-methods", commerce(s.savePaymentMethod))
+	api.HandleFunc("PUT /api/v1/admin/payment-methods/{id}", commerce(s.savePaymentMethod))
+	api.HandleFunc("DELETE /api/v1/admin/payment-methods/{id}", commerce(s.deletePaymentMethod))
+	api.HandleFunc("POST /api/v1/wallet/recharge", commerce(s.createRecharge))
+	api.HandleFunc("POST /api/v1/orders/{id}/pay", commerce(s.payRechargeOrder))
 	api.HandleFunc("POST /api/v1/admin/plans", s.savePlan)
 	api.HandleFunc("PUT /api/v1/admin/plans/{id}", s.savePlan)
 	api.HandleFunc("DELETE /api/v1/admin/plans/{id}", s.deletePlan)
@@ -318,6 +324,15 @@ func (s *Server) auth(next http.Handler) http.Handler {
 			}
 			u := session.User
 			if err == nil && u.Enabled {
+				features, err := decodeModuleFeatures(session.Features)
+				if err != nil {
+					fail(w, 503, "暂时无法加载功能开关")
+					return
+				}
+				if !features.Users && !u.IsAdmin && !(r.Method == "POST" && r.URL.Path == "/api/v1/logout") {
+					fail(w, 401, usersDisabled)
+					return
+				}
 				if strings.HasPrefix(r.URL.Path, "/api/v1/admin/") && !u.IsAdmin {
 					fail(w, 403, "需要管理员权限")
 					return
@@ -329,13 +344,13 @@ func (s *Server) auth(next http.Handler) http.Handler {
 						return
 					}
 				}
-				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, u)))
+				next.ServeHTTP(w, withIdentity(r, u, features))
 				return
 			}
 		}
 		if r.Header.Get("Authorization") != "" {
-			if u, e := s.apiKeyUser(r); e == nil {
-				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, u)))
+			if u, features, e := s.apiKeyUser(r); e == nil {
+				next.ServeHTTP(w, withIdentity(r, u, features))
 				return
 			}
 		}
@@ -392,6 +407,10 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	token := Secret()
 	e = s.createLoginSession(r.Context(), u, token)
+	if errors.Is(e, errUsersDisabled) {
+		fail(w, 403, usersDisabled)
+		return
+	}
 	if errors.Is(e, errLoginChanged) {
 		fail(w, 401, "账号或密码错误")
 		return

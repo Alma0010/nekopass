@@ -84,6 +84,7 @@ def main():
             assert 'could not change directory' not in result.stderr
             password = re.search(r'管理员密码：([^\r\n]+)', result.stdout)
             assert password and len(password[1]) == 32
+            assert result.stdout.count('管理员账号：fixture-admin') == 1
             for unit in [SERVICE, SERVICE + '-update.path']:
                 run(['systemctl', 'is-active', '--quiet', unit])
                 assert subprocess.check_output(['systemctl', 'is-enabled', unit], text=True).strip() == 'enabled'
@@ -100,6 +101,7 @@ def main():
             assert api('/healthz')['status'] == 'ok'
             api('/api/v1/login', {'username': 'fixture-admin', 'password': password[1]})
             assert api('/api/v1/me')['is_admin'] is True
+            assert sql(db_port, 'SELECT count(*) FROM users WHERE is_admin', SERVICE) == '1'
             settings = api('/api/v1/admin/settings')['settings']
             assert settings['captcha_mode'] == 'image' and settings['referral_mode'] == 'first'
             assert settings['referral_rate'] == '15' and settings['smtp']['port'] == 587
@@ -129,6 +131,7 @@ def main():
                 diagnostic.chmod(0o600)
                 raise RuntimeError('Native reinstall with missing env failed (exit ' + str(retried.returncode) + ')')
             assert '复用已有数据库' in retried.stdout and '已有管理员账号及密码已保留' in retried.stdout
+            assert '管理员账号：' not in retried.stdout
             assert '管理员密码：' not in retried.stdout and config_file.read_bytes() == original_env
             api('/api/v1/login', {'username': 'fixture-admin', 'password': password[1]})
             retained = api('/api/v1/admin/settings')['settings']

@@ -2,6 +2,8 @@ import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { type Me } from './api'
 import {loadSession} from './session'
+import {resolveRoute, routeEnabled} from './navigation'
+import {site} from './site'
 
 export function usePage(load: (me: Me) => Promise<void>, options: { admin?: boolean; interval?: number } = {}) {
  const me = ref<Me | null>(null), loading = ref(true), error = ref(''), busy = ref(false)
@@ -21,8 +23,14 @@ export function usePage(load: (me: Me) => Promise<void>, options: { admin?: bool
 }
 
 export function safeReturnPath(raw: string | null, isAdmin: boolean) {
- if (!raw || !raw.startsWith('/') || raw.startsWith('//') || /[\\\r\n]/.test(raw)) return '/'
- try { const u = new URL(raw, location.origin); if (u.origin !== location.origin || u.hash || u.username || u.password) return '/'; const path = u.pathname; const user = ['/', '/shop', '/orders', '/profile', '/tickets', '/referrals', '/forward_rules', '/node_status'].includes(path); const admin = ['/admin', '/admin/orders', '/admin/tickets', '/admin/payment_gateways', '/admin/announcements', '/admin/users', '/admin/plans', '/admin/nodes', '/admin/node_groups', '/admin/settings'].includes(path) || /^\/admin\/users\/[1-9]\d*\/forward_rules$/.test(path) || /^\/admin\/nodes\/[1-9]\d*\/(ddns|protocols|ip-recovery)$/.test(path); return user || isAdmin && admin ? path + u.search : '/' } catch { return '/' }
+ const fallback = isAdmin && !site.features.users ? '/admin' : '/'
+ if (!raw || !raw.startsWith('/') || raw.startsWith('//') || /[\\\r\n]/.test(raw)) return fallback
+ try {
+  const url = new URL(raw, location.origin)
+  if (url.origin !== location.origin || url.hash || url.username || url.password) return fallback
+  const route = resolveRoute(url.pathname)
+  return route && (!route.admin || isAdmin) && routeEnabled(route, site.features) ? url.pathname + url.search : fallback
+ } catch { return fallback }
 }
 
 export function consumeCreateIntent(){

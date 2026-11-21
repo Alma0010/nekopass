@@ -13,6 +13,6 @@ export function mount(component: Component, props: Record<string, unknown> = {})
  applyTheme(localStorage.getItem('nekopass-theme-v3') !== 'light')
  window.addEventListener('pageshow', e => { if (e.persisted) location.reload() })
  const app = resolveRoute(location.pathname) ? createApp(NavigationRoot, { initial: component, initialProps: props }) : createApp(component, props)
- app.use(ElementPlus).mount('#app')
- void loadSite()
+ // Load module switches before page components can request their data.
+ void loadSite().then(() => app.use(ElementPlus).mount('#app'))
 }

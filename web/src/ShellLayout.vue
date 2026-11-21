@@ -6,13 +6,20 @@ import BrandLogo from './BrandLogo.vue'
 import { api, type Me } from './api'
 import { applyTheme } from './theme'
 import {site} from './site'
+import { resolveRoute, routeEnabled } from './navigation'
 import { pendingTicketCount } from './ticket-badge'
 const props = defineProps<{ me: Me | null; loading: boolean; error: string; active: string; admin?: boolean; pending?: boolean }>()
 const menuOpen = ref(false), dark = ref(localStorage.getItem('nekopass-theme-v3') !== 'light')
 const userLinks = [{path:'/',label:'主页',icon:'home',key:'home'},{path:'/profile',label:'个人中心',icon:'user',key:'profile'},{path:'/forward_rules',label:'转发规则',icon:'rules',key:'rules'},{path:'/shop',label:'商城',icon:'shop',key:'shop'},{path:'/orders',label:'我的订单',icon:'orders',key:'orders'},{path:'/tickets',label:'工单',icon:'rules',key:'tickets'},{path:'/referrals',label:'邀请返利',icon:'user',key:'referrals'},{path:'/node_status',label:'节点状态',icon:'node',key:'probe'}]
 const adminLinks = [{path:'/admin',label:'后台首页',icon:'home',key:'admin'},{path:'/admin/orders',label:'订单查询',icon:'orders',key:'orders'},{path:'/admin/tickets',label:'工单管理',icon:'rules',key:'tickets'},{path:'/admin/announcements',label:'公告管理',icon:'edit',key:'announcements'},{path:'/admin/users',label:'用户管理',icon:'user',key:'users'},{path:'/admin/plans',label:'套餐管理',icon:'folder',key:'plans'},{path:'/admin/nodes',label:'节点管理',icon:'node',key:'nodes'},{path:'/admin/payment_gateways',label:'支付方式',icon:'wallet',key:'payment_gateways'},{path:'/admin/settings',label:'系统设置',icon:'settings',key:'settings'}]
 const allowed = computed(() => !!props.me && (!props.admin || props.me.is_admin))
-const links = computed(() => props.admin ? (allowed.value ? adminLinks : []) : userLinks)
+const links = computed(() => {
+ const candidates = props.admin ? (allowed.value ? adminLinks : []) : userLinks
+ return candidates.filter(item => {
+  const route = resolveRoute(item.path)
+  return route && routeEnabled(route, site.features)
+ })
+})
 async function logout() { try { await api('logout','POST',{}); location.assign('/login') } catch(e) { ElMessage.error((e as Error).message) } }
 function retry() { location.reload() }
 </script>
@@ -21,10 +28,10 @@ function retry() { location.reload() }
  <div v-else class="app-shell" :class="{'admin-shell':admin}">
   <a class="skip-link" href="#main-content">跳到内容</a>
   <header class="topbar">
-   <div class="topbar-brand"><button class="mobile-menu icon-button" aria-label="打开菜单" :aria-expanded="menuOpen" aria-controls="sidebar-navigation" @click="menuOpen=!menuOpen"><Icon name="menu" /></button><a :href="admin && allowed ? '/admin' : '/'" :aria-label="site.name"><BrandLogo /><span class="brand-site-name">{{site.name}}</span><span v-if="admin && allowed" class="admin-area-badge">管理后台</span></a></div>
+   <div class="topbar-brand"><button class="mobile-menu icon-button" aria-label="打开菜单" :aria-expanded="menuOpen" aria-controls="sidebar-navigation" @click="menuOpen=!menuOpen"><Icon name="menu" /></button><a :href="me?.is_admin && (admin || !site.features.users) ? '/admin' : '/'" :aria-label="site.name"><BrandLogo /><span class="brand-site-name">{{site.name}}</span><span v-if="admin && allowed" class="admin-area-badge">管理后台</span></a></div>
    <div class="topbar-actions">
-    <a v-if="admin && allowed" class="area-link" href="/">返回用户端</a><a v-else-if="!admin && me?.is_admin" class="area-link" href="/admin">管理后台</a>
-    <el-dropdown v-if="me && allowed" trigger="click"><el-button class="account-button"><span class="account-name">{{ me.username }}</span><span class="account-divider"></span><Icon name="user" /></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item><a href="/profile">个人中心</a></el-dropdown-item><el-dropdown-item divided @click="logout">退出登录</el-dropdown-item></el-dropdown-menu></template></el-dropdown>
+    <a v-if="admin && allowed && site.features.users" class="area-link" href="/">返回用户端</a><a v-else-if="!admin && me?.is_admin" class="area-link" href="/admin">管理后台</a>
+    <el-dropdown v-if="me && allowed" trigger="click"><el-button class="account-button"><span class="account-name">{{ me.username }}</span><span class="account-divider"></span><Icon name="user" /></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item v-if="site.features.users"><a href="/profile">个人中心</a></el-dropdown-item><el-dropdown-item :divided="site.features.users" @click="logout">退出登录</el-dropdown-item></el-dropdown-menu></template></el-dropdown>
     <el-skeleton v-else class="account-loading" animated><template #template><el-skeleton-item variant="text" /></template></el-skeleton>
     <button class="icon-button" :aria-label="dark ? '切换浅色模式' : '切换深色模式'" @click="dark=!dark;applyTheme(dark)"><Icon :name="dark ? 'sun' : 'moon'" /></button>
    </div>

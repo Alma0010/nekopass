@@ -3,6 +3,7 @@ import errno
 import os
 import pathlib
 import select
+import shutil
 import signal
 import subprocess
 import sys
@@ -10,6 +11,8 @@ import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+GIT_BASH = pathlib.Path('C:/Program Files/Git/bin/bash.exe')
+BASH = shutil.which('bash') or (str(GIT_BASH) if GIT_BASH.is_file() else None)
 
 
 @unittest.skipUnless(sys.platform.startswith('linux'), 'Requires Linux PTY')
@@ -89,6 +92,92 @@ class InstallerPromptTests(unittest.TestCase):
         self.assertEqual(result.returncode,0)
         self.assertIn('RESULT:8080',result.stdout)
         self.assertIn('UNREAD:fixture-piped-input',result.stdout)
+
+
+@unittest.skipUnless(BASH, 'Requires Bash')
+class PostgreSQLSelectionTests(unittest.TestCase):
+    def select_cluster(self, clusters, **options):
+        source = (ROOT / 'scripts/install-panel.sh').read_text(encoding='utf-8')
+        choose = source[source.index('select_postgres_cluster() {'):source.index("\nlog '请选择安装配置")]
+        configure = source[source.index('initial_pg_clusters=$(pg_lsclusters'):source.index('\nsystemctl enable postgresql')]
+        script = r'''
+set -Eeuo pipefail
+PG_SOURCE=system
+SERVICE=nekopass
+log() { printf '%s\n' "$*"; }
+die() { log "$*"; exit 1; }
+port_ok() { [[ "$1" =~ ^[0-9]{1,5}$ ]] && ((10#$1 >= 1 && 10#$1 <= 65535)); }
+postgres_installed() { [[ " $INSTALLED " == *" $1 "* ]]; }
+pg_lsclusters() { printf '%s\n' "$CLUSTERS"; }
+apt-cache() { printf '%s\n' 'postgresql-16 - PostgreSQL' 'postgresql-17 - PostgreSQL'; }
+apt-get() {
+ printf 'APT:%s\n' "$*"
+ if [[ "$*" == 'install -y postgresql-17' ]]; then
+  INSTALLED="$INSTALLED 17"
+  [[ -z "$CREATED_BY_APT" ]] || CLUSTERS="$CREATED_BY_APT"
+ fi
+}
+pg_createcluster() { printf 'CREATE:%s\n' "$*"; }
+pg_ctlcluster() { printf 'START:%s\n' "$*"; }
+prompt() {
+ local response=$3
+ if ((!YES)); then
+  printf 'PROMPT:%s\n' "$1"
+  if [[ "$1" == choice && -n "$CHOICE" ]]; then
+   response=$CHOICE
+   CHOICE=''
+  fi
+ fi
+ printf -v "$1" '%s' "$response"
+}
+'''
+        return subprocess.run(
+            [BASH, '--noprofile', '--norc', '-c', script + choose + '\n' + configure],
+            env={**os.environ, 'YES': '0', 'SKIP_DEPS': '0', 'PG_VERSION': '', 'DB_PORT': '',
+                 'CLUSTERS': clusters, 'INSTALLED': '16 17', 'CHOICE': '', 'CREATED_BY_APT': '', **options},
+            capture_output=True, encoding='utf-8', timeout=10,
+        )
+
+    def test_menu_prefers_running_cluster_and_skips_database_install(self):
+        result = self.select_cluster('16 standby 5434 online,recovery\n16 backup 5433 down\n17 main 5432 online')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('1) 沿用 PostgreSQL 16 · backup · 5433（已停止）', result.stdout)
+        self.assertIn('2) 沿用 PostgreSQL 17 · main · 5432（运行中）', result.stdout)
+        self.assertIn('3) 安装或创建新的 PostgreSQL 集群', result.stdout)
+        self.assertNotIn('standby', result.stdout)
+        self.assertNotIn('PROMPT:PG_SOURCE', result.stdout)
+        self.assertNotIn('APT:', result.stdout)
+        self.assertIn('START:17 main start', result.stdout)
+
+    def test_new_cluster_uses_another_port_even_if_version_installed(self):
+        result = self.select_cluster('17 main 5432 online', CHOICE='2', SKIP_DEPS='1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('PROMPT:PG_SOURCE', result.stdout)
+        self.assertIn('CREATE:17 nekopass --port 5433 --start', result.stdout)
+        self.assertNotIn('START:17 main', result.stdout)
+        self.assertNotIn('APT:', result.stdout)
+
+    def test_explicit_version_and_port_honor_existing_stopped_cluster(self):
+        result = self.select_cluster('16 backup 5433 down\n17 main 5432 online', YES='1', PG_VERSION='16', DB_PORT='5433')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('START:16 backup start', result.stdout)
+        self.assertNotIn('检测到本机 PostgreSQL 集群', result.stdout)
+        self.assertNotIn('PROMPT:', result.stdout)
+        self.assertNotIn('APT:', result.stdout)
+
+    def test_explicit_version_filters_interactive_cluster_choices(self):
+        result = self.select_cluster('16 main 5432 online\n16 backup 5433 down\n17 test 5434 online', PG_VERSION='16', CHOICE='2')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('START:16 backup start', result.stdout)
+        self.assertNotIn('17 · test', result.stdout)
+
+    def test_no_existing_cluster_accepts_cluster_created_by_apt(self):
+        result = self.select_cluster('', INSTALLED='', CREATED_BY_APT='17 main 5432 online')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('PROMPT:choice', result.stdout)
+        self.assertIn('APT:install -y postgresql-17', result.stdout)
+        self.assertIn('START:17 main start', result.stdout)
+        self.assertNotIn('CREATE:', result.stdout)
 
 
 if __name__ == '__main__':

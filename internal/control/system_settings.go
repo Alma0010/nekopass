@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/hex"
@@ -22,6 +23,7 @@ import (
 )
 
 type SystemSettings struct {
+	Features                      ModuleFeatures    `json:"features"`
 	Telegram                      telegram.Config   `json:"telegram"`
 	ForceInvite                   bool              `json:"force_invite"`
 	TermsURL                      string            `json:"terms_url"`
@@ -48,17 +50,24 @@ type SystemSettings struct {
 }
 
 func defaultSettings() SystemSettings {
-	return SystemSettings{Telegram: telegram.DefaultConfig(), RegistrationEmailVerification: true, CaptchaMode: "image", SMTP: registration.SMTP{Port: 587, Security: "starttls"}, ReferralMode: "first", ReferralRate: "15", ProxyTrustedCIDRs: []string{}, TargetDenyCIDRs: networkpolicy.Defaults(), SiteName: "Nekopass", AgentPort: 9443, AgentTransport: "tls", AgentVersion: "latest", InstallerURL: release.LatestBase + "/install-agent.sh", ReleaseBaseURL: release.DownloadBase, InstallTokenMinutes: 30}
+	return SystemSettings{Features: defaultModuleFeatures(), Telegram: telegram.DefaultConfig(), RegistrationEmailVerification: true, CaptchaMode: "image", SMTP: registration.SMTP{Port: 587, Security: "starttls"}, ReferralMode: "first", ReferralRate: "15", ProxyTrustedCIDRs: []string{}, TargetDenyCIDRs: networkpolicy.Defaults(), SiteName: "Nekopass", AgentPort: 9443, AgentTransport: "tls", AgentVersion: "latest", InstallerURL: release.LatestBase + "/install-agent.sh", ReleaseBaseURL: release.DownloadBase, InstallTokenMinutes: 30}
 }
 func (s *Server) readSettings(ctx context.Context) (SystemSettings, error) {
 	return readSystemSettings(ctx, s.Pool)
 }
+
+const systemSettingsSQL = "SELECT config,telegram_generation FROM site_settings WHERE id=1"
+
 func readSystemSettings(ctx context.Context, query interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }) (SystemSettings, error) {
+	return scanSystemSettings(query.QueryRow(ctx, systemSettingsSQL))
+}
+
+func scanSystemSettings(row pgx.Row) (SystemSettings, error) {
 	v := defaultSettings()
 	var data []byte
-	e := query.QueryRow(ctx, "SELECT config,telegram_generation FROM site_settings WHERE id=1").Scan(&data, &v.Telegram.Generation)
+	e := row.Scan(&data, &v.Telegram.Generation)
 	if e != nil {
 		return v, e
 	}
@@ -100,7 +109,7 @@ func validateSettings(v SystemSettings) error {
 	if _, err := referralRate(v.ReferralRate); err != nil {
 		return err
 	}
-	if err := v.SMTP.Validate(v.RegistrationEnabled && v.RegistrationEmailVerification); err != nil {
+	if err := v.SMTP.Validate(v.registrationOpen() && v.RegistrationEmailVerification); err != nil {
 		return err
 	}
 	if _, err := networkpolicy.Normalize(v.ProxyTrustedCIDRs, 64); err != nil {
@@ -157,7 +166,7 @@ func (s *Server) publicSite(w http.ResponseWriter, r *http.Request) {
 		fail(w, 503, "暂时无法加载站点设置")
 		return
 	}
-	writeJSON(w, 200, map[string]string{"site_name": v.SiteName})
+	writeJSON(w, 200, map[string]any{"site_name": v.SiteName, "features": v.Features})
 }
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 	if !admin(w, r) {
@@ -183,10 +192,14 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	if !admin(w, r) {
 		return
 	}
-	v := defaultSettings()
-	if !decode(w, r, &v) {
+	in := struct {
+		SystemSettings
+		Features json.RawMessage `json:"features"`
+	}{SystemSettings: defaultSettings()}
+	if !decode(w, r, &in) {
 		return
 	}
+	v := in.SystemSettings
 	v.TermsURL = strings.TrimSpace(v.TermsURL)
 	if err := v.Telegram.Normalize(); err != nil {
 		fail(w, 400, err.Error())
@@ -198,6 +211,28 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	v.ReleaseBaseURL = strings.TrimRight(v.ReleaseBaseURL, "/")
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
+	tx, e := s.Pool.Begin(r.Context())
+	if e != nil {
+		s.dbError(w, e)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	old, e := scanSystemSettings(tx.QueryRow(r.Context(), systemSettingsSQL+" FOR UPDATE"))
+	if e != nil {
+		s.dbError(w, e)
+		return
+	}
+	// Clients that predate the switches, or submit only some of them, keep
+	// the stored values for every switch they omit.
+	v.Features = old.Features
+	if len(in.Features) > 0 {
+		decoder := json.NewDecoder(bytes.NewReader(in.Features))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&v.Features); err != nil {
+			fail(w, 400, "功能开关设置无效")
+			return
+		}
+	}
 	if e := validateSettings(v); e != nil {
 		fail(w, 400, e.Error())
 		return
@@ -206,11 +241,6 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	v.TargetDenyCIDRs, _ = networkpolicy.Normalize(v.TargetDenyCIDRs, 256)
 	var previous, plan agentListenPlan
 	if s.agentListener != nil {
-		old, e := s.readSettings(r.Context())
-		if e != nil {
-			s.dbError(w, e)
-			return
-		}
 		previous = s.agentListener.current()
 		// Replacing an HTTPS proxy with direct HTTP changes the default public
 		// port to the actual backend port; explicitly edited NAT ports are retained.
@@ -224,12 +254,6 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	tx, e := s.Pool.Begin(r.Context())
-	if e != nil {
-		s.dbError(w, e)
-		return
-	}
-	defer tx.Rollback(r.Context())
 	data, _ := json.Marshal(v)
 	if _, e := tx.Exec(r.Context(), "UPDATE site_settings SET telegram_generation=telegram_generation+CASE WHEN config->'telegram' IS DISTINCT FROM $1::jsonb->'telegram' THEN 1 ELSE 0 END,config=$1,updated_at=now() WHERE id=1", data); e != nil {
 		s.dbError(w, e)
@@ -325,34 +349,37 @@ func revokeOverlappingAPIKey(ctx context.Context, db store.DBTX) error {
 	return err
 }
 
-func (s *Server) apiKeyUser(r *http.Request) (store.User, error) {
+func (s *Server) apiKeyUser(r *http.Request) (store.User, ModuleFeatures, error) {
+	var features ModuleFeatures
 	if !strings.HasPrefix(r.URL.Path, "/api/v1/admin/") {
-		return store.User{}, errors.New("management API only")
+		return store.User{}, features, errors.New("management API only")
 	}
 	key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if key == r.Header.Get("Authorization") || len(key) < 32 || len(key) > 256 {
-		return store.User{}, errors.New("invalid API key")
+		return store.User{}, features, errors.New("invalid API key")
 	}
 	var hash string
 	var uid *int64
 	var reused bool
-	if e := s.Pool.QueryRow(r.Context(), "SELECT api_key_hash,api_key_user_id,EXISTS(SELECT 1 FROM nodes WHERE token_hash=api_key_hash) FROM site_settings WHERE id=1").Scan(&hash, &uid, &reused); e != nil {
-		return store.User{}, e
+	var rawFeatures []byte
+	if e := s.Pool.QueryRow(r.Context(), "SELECT api_key_hash,api_key_user_id,EXISTS(SELECT 1 FROM nodes WHERE token_hash=api_key_hash),COALESCE(config->'features','{}'::jsonb) FROM site_settings WHERE id=1").Scan(&hash, &uid, &reused, &rawFeatures); e != nil {
+		return store.User{}, features, e
 	}
 	if reused {
 		// This snapshot proves the key was shared. Guard against concurrent key
 		// rotation, but do not restore validity when the node rotates its token.
 		_, _ = s.Pool.Exec(r.Context(), "UPDATE site_settings SET api_key_hash='',api_key_user_id=NULL WHERE id=1 AND api_key_hash=$1", hash)
-		return store.User{}, errors.New("management key overlapped a node credential; rotate management key")
+		return store.User{}, features, errors.New("management key overlapped a node credential; rotate management key")
 	}
 	if uid == nil || hash == "" || subtle.ConstantTimeCompare([]byte(hash), []byte(Hash(key))) != 1 {
-		return store.User{}, errors.New("invalid API key")
+		return store.User{}, features, errors.New("invalid API key")
 	}
 	u, e := s.query.FindUser(r.Context(), *uid)
 	if e != nil || !u.Enabled || !u.IsAdmin {
-		return store.User{}, errors.New("API key owner inactive")
+		return store.User{}, features, errors.New("API key owner inactive")
 	}
-	return u, nil
+	features, e = decodeModuleFeatures(rawFeatures)
+	return u, features, e
 }
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }

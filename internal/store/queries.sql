@@ -5,7 +5,8 @@ SELECT * FROM users WHERE username = $1;
 SELECT * FROM users WHERE id = $1;
 
 -- name: FindSession :one
-SELECT sqlc.embed(u),s.cookie_renewed_at FROM users u JOIN sessions s ON s.user_id=u.id
+SELECT sqlc.embed(u),s.cookie_renewed_at,COALESCE((SELECT config->'features' FROM site_settings WHERE id=1),'{}'::jsonb)::jsonb AS features
+FROM users u JOIN sessions s ON s.user_id=u.id
 WHERE s.token_hash=$1 AND (s.expires_at IS NULL OR s.expires_at>now());
 
 -- name: RenewSessionCookie :execrows

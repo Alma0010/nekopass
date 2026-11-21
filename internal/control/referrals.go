@@ -60,7 +60,7 @@ func creditReferral(ctx context.Context, tx pgx.Tx, buyer, source int64, price i
 	if err != nil {
 		return err
 	}
-	if !settings.ReferralEnabled {
+	if !settings.Features.Invites || !settings.ReferralEnabled {
 		return nil
 	}
 	var inviter *int64
@@ -127,6 +127,10 @@ func (s *Server) referrals(w http.ResponseWriter, r *http.Request) {
 	v, err := s.readSettings(r.Context())
 	if err != nil {
 		s.dbError(w, err)
+		return
+	}
+	if !v.Features.Invites {
+		fail(w, 403, "此站点已关闭邀请功能")
 		return
 	}
 	if !v.ReferralEnabled {

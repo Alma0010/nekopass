@@ -128,11 +128,18 @@ func (s *Server) pages(static http.Handler) http.Handler {
 			}
 			u := session.User
 			if err == nil && u.Enabled {
-				if err = s.renewSessionCookie(w, r, cookie.Value, session.CookieRenewedAt); err != nil {
-					pageError(w, r, 503, "暂时无法续期登录状态，请稍后重试。")
+				features, err := decodeModuleFeatures(session.Features)
+				if err != nil {
+					pageError(w, r, 503, "暂时无法加载功能开关。")
 					return
 				}
-				user = &u
+				if features.Users || u.IsAdmin {
+					if err = s.renewSessionCookie(w, r, cookie.Value, session.CookieRenewedAt); err != nil {
+						pageError(w, r, 503, "暂时无法续期登录状态，请稍后重试。")
+						return
+					}
+					user = &u
+				}
 			}
 		}
 		if route.file == "login" || route.file == "register" {

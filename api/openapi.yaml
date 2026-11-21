@@ -628,16 +628,17 @@ paths:
   /site:
     get:
       security: []
-      summary: Public site name only; never returns connection settings or keys
+      summary: Public site name and feature switches
       responses:
         '200':
-          description: Site branding
+          description: Site branding and available modules
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   site_name: {type: string}
+                  features: {$ref: '#/components/schemas/ModuleFeatures'}
   /admin/settings:
     get:
       security: [{session: []}, {httpSession: []}, {adminKey: []}]
@@ -656,6 +657,7 @@ paths:
     put:
       security: [{session: []}, {httpSession: []}, {adminKey: []}]
       summary: Replace system settings; public endpoints do not rebind server listeners
+      description: Omitted module switches keep their saved values.
       requestBody:
         required: true
         content:
@@ -1469,10 +1471,19 @@ components:
     BillingCycle:
       type: string
       enum: [monthly, quarterly, semiannual, annual, biennial, triennial, onetime]
+    ModuleFeatures:
+      type: object
+      additionalProperties: false
+      properties:
+        commerce: {type: boolean, default: true, description: 'Shop, wallet, orders, new payments and automatic renewals. Existing payment callbacks may settle after this is disabled.'}
+        invites: {type: boolean, default: true, description: 'Invite codes and rewards. Disabling pauses invite requirements without erasing them.'}
+        tickets: {type: boolean, default: true, description: 'Support tickets for users and staff.'}
+        users: {type: boolean, default: true, description: 'Sign-in, registration and self-service for regular users. Administrator access and existing forwarding are retained.'}
     SystemSettings:
       type: object
       additionalProperties: false
       properties:
+        features: {$ref: '#/components/schemas/ModuleFeatures'}
         telegram:
           type: object
           additionalProperties: false

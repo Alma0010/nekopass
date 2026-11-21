@@ -20,7 +20,9 @@ ARM64 使用 `nekopass-panel-linux-arm64.tar.gz`。
 wget https://github.com/Alma0010/nekopass/releases/latest/download/install-panel.sh -O install-panel.sh && sudo bash install-panel.sh
 ```
 
-安装器可选择系统源或 PostgreSQL 官方源及数据库主版本，并创建数据库、配置 systemd、生成管理员随机密码和开启自启。支持 PostgreSQL 14 或以上。
+安装器会列出本机已安装的 PostgreSQL 14 或以上集群，包括版本、名称、端口和运行状态。默认沿用已有集群，优先选择正在运行的集群。也可选择新建集群，再选择系统源或 PostgreSQL 官方源及数据库主版本。
+
+安装器会在所选集群中创建面板数据库、配置 systemd 并生成初始管理员密码。复用已有面板数据库时保留原有管理员。
 
 | 默认入口 | 端口 |
 | --- | --- |
@@ -38,7 +40,8 @@ wget https://github.com/Alma0010/nekopass/releases/latest/download/install-panel
 | `--host` | 用户和节点能访问的域名 / IP。 |
 | `--http-port` / `--grpc-port` | 网页和节点控制监听端口。 |
 | `--agent-host` / `--agent-port` | 节点连接的外部地址 / 端口，适用于代理或 NAT。 |
-| `--postgres-source` / `--postgres-version` | 数据库来源和主版本。 |
+| `--postgres-source` | 新装 PostgreSQL 时使用系统源或 PostgreSQL 官方源。 |
+| `--postgres-version` / `--db-port` | 指定本机 PostgreSQL 主版本和端口，以沿用对应集群。 |
 | `--admin` / `--site-name` | 初始管理员和站点名称。 |
 | `--reinstall` | 清空该服务的面板数据库并全新安装。 |
 | `--yes` | 使用参数与默认值，不交互询问。 |

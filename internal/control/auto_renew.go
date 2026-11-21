@@ -78,7 +78,10 @@ func (s *Server) saveAutoRenew(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) renewDueSubscriptions(ctx context.Context, now time.Time) error {
-	rows, err := s.Pool.Query(ctx, `SELECT u.id FROM users u JOIN user_entitlements e ON e.id=u.id WHERE u.enabled AND u.auto_renew_enabled AND e.expires_at<=$1 AND u.auto_renew_next_attempt<=$1 ORDER BY u.auto_renew_next_attempt,u.id LIMIT 100`, now)
+	rows, err := s.Pool.Query(ctx, `SELECT u.id FROM users u JOIN user_entitlements e ON e.id=u.id
+WHERE u.enabled AND u.auto_renew_enabled AND e.expires_at<=$1 AND u.auto_renew_next_attempt<=$1
+AND COALESCE((SELECT (config#>>'{features,commerce}')::boolean FROM site_settings WHERE id=1),true)
+ORDER BY u.auto_renew_next_attempt,u.id LIMIT 100`, now)
 	if err != nil {
 		return err
 	}
@@ -115,7 +118,9 @@ func (s *Server) renewOneSubscription(ctx context.Context, uid int64, now time.T
 	var cap int64
 	var expiry *time.Time
 	var attempt time.Time
-	if err = tx.QueryRow(ctx, `SELECT u.auto_renew_enabled,u.auto_renew_cycle,u.auto_renew_price_cents,e.expires_at,u.auto_renew_next_attempt FROM users u JOIN user_entitlements e ON e.id=u.id WHERE u.id=$1`, uid).Scan(&enabled, &cycle, &cap, &expiry, &attempt); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT u.auto_renew_enabled AND COALESCE((SELECT (config#>>'{features,commerce}')::boolean FROM site_settings WHERE id=1),true),
+u.auto_renew_cycle,u.auto_renew_price_cents,e.expires_at,u.auto_renew_next_attempt
+FROM users u JOIN user_entitlements e ON e.id=u.id WHERE u.id=$1`, uid).Scan(&enabled, &cycle, &cap, &expiry, &attempt); err != nil {
 		return err
 	}
 	if !enabled || expiry == nil || expiry.After(now) || attempt.After(now) {

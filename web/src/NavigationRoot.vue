@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { markRaw, nextTick, onMounted, onUnmounted, ref, shallowRef, type Component } from 'vue'
+import { computed, markRaw, nextTick, onMounted, onUnmounted, ref, shallowRef, type Component } from 'vue'
 import ShellLayout from './ShellLayout.vue'
-import { resolveRoute } from './navigation'
+import { resolveRoute, routeEnabled } from './navigation'
 import { loadSession, sessionUser } from './session'
-import { site } from './site'
+import { loadSite, site } from './site'
 const props = defineProps<{ initial: Component; initialProps: Record<string, unknown> }>()
 const current = shallowRef(markRaw(props.initial)), route = shallowRef(resolveRoute(location.pathname)!)
 const pageProps = shallowRef(props.initialProps), pageKey = ref(location.pathname + location.search), pending = ref(false)
+const enabled = computed(() => routeEnabled(route.value, site.features))
+const sessionError = ref('')
 const positions = new Map<string, number>()
 let sequence = 0, restoreTop: number | undefined
 let scrollObserver: ResizeObserver | undefined, scrollTimer: ReturnType<typeof setTimeout> | undefined
@@ -43,7 +45,7 @@ async function navigate(url: URL, pop = false) {
  if (key === pageKey.value) { pending.value = false; return }
  pending.value = true
  try {
-  const [module, me] = await Promise.all([target.load(), loadSession(true)])
+  const [module, me] = await Promise.all([target.load(), loadSession(true), loadSite()])
   if (attempt !== sequence) return
   if (target.admin && !me.is_admin) { location.assign(url.href); return }
   positions.set(pageKey.value, window.scrollY)
@@ -73,7 +75,8 @@ function prefetch(event: Event) {
  const connection = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection
  if (connection?.saveData) return
  const url = link(event)
- if (url) void resolveRoute(url.pathname)?.load().catch(() => {})
+ const target = url && resolveRoute(url.pathname)
+ if (target && routeEnabled(target, site.features)) void target.load().catch(() => {})
 }
 function popstate() { void navigate(new URL(location.href), true) }
 function focusContent() { document.querySelector<HTMLElement>('.page-content')?.focus({ preventScroll: true }) }
@@ -83,6 +86,7 @@ function pageReady(event: Event) {
  focusContent()
 }
 onMounted(() => {
+ if (!enabled.value) void loadSession().catch(e => { sessionError.value = (e as Error).message })
  document.addEventListener('click', click)
  document.addEventListener('pointerover', prefetch, { passive: true })
  document.addEventListener('focusin', prefetch)
@@ -102,9 +106,14 @@ onUnmounted(() => {
 })
 </script>
 <template>
- <ShellLayout :me="sessionUser" :loading="!sessionUser" error="" :admin="route.admin" :active="route.active" :pending="pending">
+ <ShellLayout :me="sessionUser" :loading="!sessionUser && !sessionError" :error="sessionError" :admin="route.admin" :active="route.active" :pending="pending">
   <Transition name="page-switch" mode="out-in" @after-enter="focusContent">
-   <component :is="current" v-bind="pageProps" :key="pageKey" />
+   <component v-if="enabled" :is="current" v-bind="pageProps" :key="pageKey" />
+   <section v-else-if="sessionUser" class="page-content page-load-error surface" tabindex="-1">
+    <h2>{{ !route.admin && !site.features.users ? '用户端已关闭' : '此功能已关闭' }}</h2>
+    <a v-if="sessionUser.is_admin" href="/admin">返回管理后台</a>
+    <a v-else href="/">返回主页</a>
+   </section>
   </Transition>
  </ShellLayout>
 </template>
