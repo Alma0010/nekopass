@@ -185,16 +185,20 @@ def unit_info(path):
     return info
 
 
-def installed_unit(path, root, matches):
+def installed_unit(path, root, checks):
     exists = safe_path(path, root)
     info = unit_info(path)
     state = info.get('LoadState')
     if not exists and state == 'not-found':
         return False
-    if (state != 'loaded' or info.get('FragmentPath') != str(path)
-            or (exists and not matches(info))
-            or (not exists and info.get('ActiveState') not in ('inactive', 'failed'))):
-        raise ValueError(f'无法确认服务属于所选面板：{path.name}')
+    verified = {'LoadState': state == 'loaded', 'FragmentPath': info.get('FragmentPath') == str(path)}
+    if exists:
+        verified.update(checks(info))
+    else:
+        verified['ActiveState'] = info.get('ActiveState') in ('inactive', 'failed')
+    mismatch = [field for field, passed in verified.items() if not passed]
+    if mismatch:
+        raise ValueError(f'无法确认服务属于所选面板：{path.name}（{", ".join(mismatch)}）')
     # A retry can encounter an inactive unit still cached by the systemd manager.
     return exists
 
@@ -260,18 +264,21 @@ def uninstall(service, dry_run, yes, root=pathlib.Path('/'), *, locked=False):
     manager = root / 'usr/local/bin/nekopassctl'
     alias = 'panel' if service == 'nekopass' else service
 
-    has_main = installed_unit(primary, root, lambda info: (
-        info.get('User') == service
-        and str(config) in info.get('EnvironmentFiles', '').split()
-        and starts_with(info, [str(binary), '-web', str(web)])
-    ))
-    has_watcher = installed_unit(watcher, root, lambda info: (
-        info.get('NeedDaemonReload') == 'no' and not info.get('DropInPaths')
-        and info.get('Paths') == f'{request} (PathExists)' and info.get('Unit') == updater.name
-    ))
-    has_updater = installed_unit(updater, root, lambda info: (
-        not info.get('DropInPaths') and starts_with(info, [str(manager), alias, 'update'], exact=True)
-    ))
+    has_main = installed_unit(primary, root, lambda info: {
+        'User': info.get('User') == service,
+        'EnvironmentFiles': str(config) in info.get('EnvironmentFiles', '').split(),
+        'ExecStart': starts_with(info, [str(binary), '-web', str(web)]),
+    })
+    has_watcher = installed_unit(watcher, root, lambda info: {
+        'NeedDaemonReload': info.get('NeedDaemonReload') == 'no',
+        'DropInPaths': not info.get('DropInPaths'),
+        'Paths': info.get('Paths') == f'{request} (PathExists)',
+        'Unit': info.get('Unit') == updater.name,
+    })
+    has_updater = installed_unit(updater, root, lambda info: {
+        'DropInPaths': not info.get('DropInPaths'),
+        'ExecStart': starts_with(info, [str(manager), alias, 'update'], exact=True),
+    })
     files = [binary, binary.with_suffix('.previous'), binary.with_suffix('.next'), binary.with_suffix('.update-pending')]
     # The default Agent uses the same helper. A co-located Agent also takes
     # precedence if its artifacts are present in a named panel's directory.

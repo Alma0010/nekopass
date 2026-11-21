@@ -17,6 +17,7 @@ import socket
 import ssl
 import stat
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -34,6 +35,43 @@ AGENT_UNIT_SUFFIXES = ('-uninstall.path', '-uninstall.service', '-update.path', 
 
 def run(args, **kwargs):
     return subprocess.run(args, check=True, **kwargs)
+
+
+def diagnostic(label, output, secrets=()):
+    for secret in secrets:
+        if secret:
+            output = output.replace(secret, '[redacted]')
+    output = re.sub(r'(?mi)^.*(?:password|token|authorization|密码|密钥)\s*[:=：].*$', '[credential line redacted]', output)
+    output = re.sub(r'\b[a-fA-F0-9]{40,}\b', '[redacted]', output)
+    if output.strip():
+        print(label, file=sys.stderr, flush=True)
+        for line in output[-3000:].splitlines()[-25:]:
+            print('  ' + ''.join(char if char.isprintable() else '?' for char in line), file=sys.stderr, flush=True)
+
+
+def native_step(label, args, *, secrets=(), **kwargs):
+    result = subprocess.run(args, capture_output=True, encoding='utf-8', errors='replace', **kwargs)
+    if result.returncode:
+        diagnostic(label + ' stdout', result.stdout, secrets)
+        diagnostic(label + ' stderr', result.stderr, secrets)
+        raise RuntimeError(f'{label} failed (exit {result.returncode})')
+    return result
+
+
+def unit_diagnostics(units, secrets=(), *, journal=False):
+    properties = ('LoadState,ActiveState,SubState,FragmentPath,ExecStart,EnvironmentFiles,User,DropInPaths,'
+                  'Paths,Unit,NeedDaemonReload,Result,ExecMainCode,ExecMainStatus')
+    for unit in units:
+        try:
+            result = subprocess.run(['systemctl', 'show', '--all', '--no-pager', '-p', properties, unit],
+                                    capture_output=True, text=True, errors='replace', timeout=5)
+            diagnostic(unit, result.stdout + result.stderr, secrets)
+            if journal:
+                result = subprocess.run(['journalctl', '-u', unit, '--no-pager', '-n', '20', '-o', 'cat'],
+                                        capture_output=True, text=True, errors='replace', timeout=5)
+                diagnostic(unit + ' journal', result.stdout + result.stderr, secrets)
+        except (OSError, subprocess.TimeoutExpired):
+            print(f'Could not read diagnostics for {unit}', file=sys.stderr, flush=True)
 
 
 def free_port():
@@ -113,22 +151,22 @@ def test_agent_uninstall(api, agent_installer, agent_binary, grpc_port, temporar
         server.socket = context.wrap_socket(server.socket, server_side=True)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
+        agent_tokens = []
         try:
             installed_nodes = []
             for i, service in enumerate(AGENT_SERVICES):
                 node = api('/api/v1/admin/nodes', {'name': service, 'enabled': i != 0,
                                                   'udp_idle_timeout_seconds': 30}, 'POST')
                 installed_nodes.append(node['id'])
+                agent_tokens.append(node['token'])
                 url = 'https://127.0.0.1:' + str(server.server_port) + '/' + agent_binary.name
                 with tempfile.NamedTemporaryFile(dir=temporary) as token_file:
                     token_file.write(node['token'].encode())
                     token_file.flush()
-                    install = subprocess.run(['bash', str(agent_installer), '--service-name', service,
+                    native_step(f'Native Agent install for {service}', ['bash', str(agent_installer), '--service-name', service,
                         '--server', 'http://127.0.0.1:' + str(grpc_port), '--token-file', token_file.name,
-                        '--binary-url', url, '--version', agent_binary.parent.name], capture_output=True,
+                        '--binary-url', url, '--version', agent_binary.parent.name], secrets=agent_tokens,
                         env={**os.environ, 'CURL_CA_BUNDLE': str(cert)}, timeout=180)
-                if install.returncode:
-                    raise RuntimeError(f'Native Agent fixture failed to install {service} (exit {install.returncode})')
 
             def agents_ready():
                 nodes = read_nodes()
@@ -162,6 +200,11 @@ def test_agent_uninstall(api, agent_installer, agent_binary, grpc_port, temporar
             assert (agent_paths(sibling)[0] / 'agent.env').read_bytes() == sibling_config
             assert read_nodes()[sibling_node]['online']
             print('PASS panel-triggered native Agent uninstall, true result, other Agent remains running')
+        except Exception:
+            units = [service + suffix for service in AGENT_SERVICES
+                     for suffix in ('.service', '-uninstall.path', '-uninstall.service')]
+            unit_diagnostics(units, agent_tokens, journal=True)
+            raise
         finally:
             server.shutdown()
             thread.join()
@@ -200,6 +243,7 @@ def main():
         original_stat = cli.stat() if cli.exists() else None
         if original_stat:
             shutil.copy2(cli, backup)
+        test_passwords = []
         try:
             install_args = ['bash', str(args.installer.resolve()), '--package', str(args.package.resolve()),
                                      '--service-name', SERVICE, '--host', '127.0.0.1',
@@ -207,14 +251,11 @@ def main():
                                      '--postgres-version', version, '--db-port', db_port,
                                      '--admin', 'fixture-admin', '--agent-tls', 'plain',
                                      '--firewall', 'skip', '--skip-dependencies', '--yes']
-            result = subprocess.run(install_args,
-                                    cwd='/root', capture_output=True, text=True, timeout=180)
-            # Never print captured installer output: it contains a generated password.
-            if result.returncode:
-                raise RuntimeError('Fresh native installer failed (exit ' + str(result.returncode) + ')')
+            result = native_step('Fresh native panel install', install_args, cwd='/root', timeout=180)
             assert 'could not change directory' not in result.stderr
             password = re.search(r'管理员密码：([^\r\n]+)', result.stdout)
             assert password and len(password[1]) == 32
+            test_passwords.append(password[1])
             assert result.stdout.count('管理员账号：fixture-admin') == 1
             for unit in [SERVICE, SERVICE + '-update.path']:
                 run(['systemctl', 'is-active', '--quiet', unit])
@@ -289,14 +330,11 @@ def main():
             assert api('/api/v1/admin/settings')['settings']['referral_rate'] == '12.5'
             agent_config = config_file.parent / 'agent.env'
             agent_config.write_text('NEKOPASS_SERVER=http://127.0.0.1:1\n')
-            reset = subprocess.run(install_args + ['--reinstall'], cwd='/root', capture_output=True, text=True, timeout=180)
-            if reset.returncode:
-                diagnostic = args.installer.resolve().parent / 'reinstall-failure.log'
-                diagnostic.write_text(reset.stdout + reset.stderr)
-                diagnostic.chmod(0o600)
-                raise RuntimeError('Explicit database reset failed (exit ' + str(reset.returncode) + ')')
+            reset = native_step('Explicit panel database reset', install_args + ['--reinstall'],
+                                secrets=test_passwords, cwd='/root', timeout=180)
             replacement_password = re.search(r'管理员密码：([^\r\n]+)', reset.stdout)
             assert replacement_password and replacement_password[1] != password[1]
+            test_passwords.append(replacement_password[1])
             opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
             api('/api/v1/login', {'username': 'fixture-admin', 'password': replacement_password[1]})
             clean = api('/api/v1/admin/settings')['settings']
@@ -344,13 +382,13 @@ def main():
             archive_pattern = '.uninstalled-*/control.env'
             uninstall_args = [str(cli), SERVICE, 'uninstall']
 
-            run(uninstall_args + ['--dry-run'], capture_output=True, timeout=30)
+            native_step('Panel uninstall preview', uninstall_args + ['--dry-run'], secrets=test_passwords, timeout=30)
             assert not list(config_file.parent.glob(archive_pattern))
             assert config_file.read_bytes() == installed_config
             run(['systemctl', 'is-active', '--quiet', SERVICE + '-update.path'])
             assert api('/api/v1/admin/settings')['settings']['referral_rate'] == '12.5'
 
-            run(uninstall_args + ['--yes'], capture_output=True, timeout=60)
+            native_step('Panel uninstall', uninstall_args + ['--yes'], secrets=test_passwords, timeout=60)
             for unit in UNITS:
                 assert not (pathlib.Path('/etc/systemd/system') / unit).exists()
                 assert subprocess.run(['systemctl', 'is-active', '--quiet', unit]).returncode != 0
@@ -371,11 +409,12 @@ def main():
             assert sql(db_port, admin_query, SERVICE) == retained_admin
             assert subprocess.check_output(['id', '-u', SERVICE], text=True) == service_uid
 
-            run(uninstall_args + ['--yes'], capture_output=True, timeout=30)
+            native_step('Repeated panel uninstall', uninstall_args + ['--yes'], secrets=test_passwords, timeout=30)
             assert list(config_file.parent.glob(archive_pattern)) == archives
 
             # A normal install brings the panel back using the existing DB and credentials.
-            restored = run(install_args, cwd='/root', capture_output=True, text=True, timeout=180)
+            restored = native_step('Panel reinstall using preserved database', install_args,
+                                   secrets=test_passwords, cwd='/root', timeout=180)
             assert '管理员密码：' not in restored.stdout
             opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
             api('/api/v1/login', {'username': 'fixture-admin', 'password': replacement_password[1]})
@@ -389,6 +428,9 @@ def main():
                 assert api('/healthz')['status'] == 'ok'
             assert subprocess.check_output(['systemctl', 'show', 'nekopass.service', '-p', 'MainPID', '--value']) == live_pid
             print('PASS native install, database reset, scoped uninstall, and reinstall with preserved data and Agent files')
+        except Exception:
+            unit_diagnostics(UNITS, test_passwords)
+            raise
         finally:
             for unit in UNITS:
                 subprocess.run(['systemctl', 'disable', '--now', unit], capture_output=True)

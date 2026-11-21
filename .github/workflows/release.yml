@@ -91,6 +91,10 @@ jobs:
         run: ./scripts/package-panel.ps1 -Version $env:RELEASE_TAG
       - name: Test native panel installation and Agent uninstall
         run: |
+          # The hosted runner leaves /opt writable by every user during image setup.
+          opt_mode=$(stat -c '%a' -- /opt)
+          trap 'sudo chmod -- "$opt_mode" /opt' EXIT
+          sudo chmod -- go-w /opt
           sudo python3 tests/panel_fresh_install_e2e.py \
             --installer dist/oss/nekopass/install-panel.sh \
             --package "dist/oss/nekopass/releases/$RELEASE_TAG/nekopass-panel-linux-amd64.tar.gz" \

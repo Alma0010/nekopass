@@ -2,6 +2,7 @@
 import contextlib
 import io
 import pathlib
+import stat
 import subprocess
 import sys
 import tempfile
@@ -51,6 +52,7 @@ class PanelUninstallTests(unittest.TestCase):
         self.addCleanup(stack.close)
         stack.enter_context(patch.object(self.module, 'check_web_mounts'))
         stack.enter_context(patch.object(self.module, 'update_lock', return_value=contextlib.nullcontext()))
+        self.real_safe_path = self.module.safe_path
         stack.enter_context(patch.object(self.module, 'safe_path', side_effect=self.path_exists))
         stack.enter_context(patch.object(self.module.subprocess, 'run', side_effect=self.systemctl))
 
@@ -110,7 +112,7 @@ class PanelUninstallTests(unittest.TestCase):
     def test_preview_and_foreign_unit_never_mutate(self):
         self.assertIn(str(self.helper), self.uninstall(dry_run=True))
         self.units[self.updater.name]['ExecStart'] = self.start(self.manager, 'nekopass-panel-other', 'update')
-        with self.assertRaisesRegex(ValueError, self.updater.name):
+        with self.assertRaisesRegex(ValueError, self.updater.name + '.*ExecStart'):
             self.uninstall()
         self.assertEqual(self.calls, [])
         self.assertTrue(self.config.is_file())
@@ -118,6 +120,13 @@ class PanelUninstallTests(unittest.TestCase):
     def test_removes_dedicated_updater(self):
         self.uninstall()
         self.assertFalse(self.helper.exists())
+
+    def test_rejects_world_writable_opt(self):
+        writable_directory = types.SimpleNamespace(st_mode=stat.S_IFDIR | 0o777, st_uid=0)
+        with patch.object(pathlib.Path, 'lstat', autospec=True, return_value=writable_directory) as lstat:
+            with self.assertRaisesRegex(ValueError, '路径类型、归属或权限不符合安装布局：'):
+                self.real_safe_path(self.binary, self.root)
+        lstat.assert_called_once_with(self.root / 'opt')
 
 
 if __name__ == '__main__':
