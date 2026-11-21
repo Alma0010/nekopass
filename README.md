@@ -36,6 +36,7 @@ Nekopass是一个开源免费的转发面板，设计参考了nyanpass，但是�
 - 带宽按用户在各节点独立限速，双向业务流量支持按入口和出口倍率计费。
 - 流量额度耗尽后暂停计费线路，0 倍线路仍可使用；套餐到期停止转发，周期套餐每月重置流量。
 - 支持余额购买、手动或自动续费套餐、余额充值及订单和余额明细。
+- 可在「系统设置 → 功能开关」分别启用或关闭商用、邀请、工单和用户端。
 - 支持节点分组、入口与出口权限控制，节点配置无需手动编辑，由面板主控统一下发。
 - 提供 CPU、内存、磁盘、实时网络速率、连接数和负载探针。
 - 集成 DDNS功能，支持动态 IPv4、IPv6 地址更新。
@@ -51,7 +52,7 @@ Debian / Ubuntu，amd64 / arm64：
 wget https://github.com/Alma0010/nekopass/releases/latest/download/install-panel.sh -O install-panel.sh && sudo bash install-panel.sh
 ```
 
-安装完成显示管理员账号和随机密码。网页默认 `8080`，节点控制端口 `9443`；网页 HTTPS 自行配置 Nginx。
+安装时可在菜单里选择已有的 PostgreSQL 14 或更新版本的本机集群，也可以创建新的集群。全新安装完成后会显示初始管理员账号和随机密码。网页默认 `8080`，节点控制端口默认 `9443`。无人值守安装和 HTTPS 配置见 [面板安装文档](docs/guide/panel.md)。
 
 清空数据重新安装：`sudo bash install-panel.sh --reinstall`。会删除全部面板数据并生成新的管理员密码，执行前自行备份；加 `--yes` 不再确认。
 
@@ -92,11 +93,9 @@ sudo nekopassctl panel reset-password # 重置管理员密码
 节点也可在后台「节点管理」更新。老版本节点需先重新执行一次新版安装命令，以安装更新服务。更新保留配置及状态，服务重启会中断现有连接。
 ## 文档
 
-很显然readme.md放不下这么多字，所以我们创建了一个文档站，你可以在这里了解如何使用此软件
-
-https://Alma0010.github.io/nekopass/
-
->文档由ai总结，目前缺少人工润色，但是不影响你查看
+- [在线文档](https://alma0010.github.io/nekopass/)
+- [安装面板与选择 PostgreSQL](docs/guide/panel.md)
+- [功能开关和面板管理](docs/guide/manage.md#功能开关)
 
 ## 编译
 
@@ -118,7 +117,7 @@ pwsh -File scripts/package-panel.ps1  # 面板和节点完整发布包
 pwsh -File scripts/package-agent.ps1  # 仅节点发布文件
 ```
 
-产物位于 `dist/oss/nekopass/`，可用 `-Version v0.19.3` 指定版本号。
+产物位于 `dist/oss/nekopass/`，可用 `-Version v0.20.4` 指定版本号。
 
 ## 发布 Releases 与 GitHub Pages
 

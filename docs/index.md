@@ -16,7 +16,7 @@ hero:
       link: /guide/node
 features:
   - title: 一键安装
-    details: 自动配置数据库、服务和管理员账号。
+    details: 选择已有 PostgreSQL 集群或新建集群，自动配置服务和管理员账号。
     link: /guide/panel
   - title: TCP / UDP 转发
     details: 直转与中转，支持明文、TLS；raw(tcp)、h2 和 raw(udp) 均可使用全随机加密。
@@ -25,6 +25,6 @@ features:
     details: 邮箱注册、余额购买、邀请返利、工单和订单查询。
     link: /guide/account
   - title: 日常管理
-    details: 启停、自启、日志、配置和密码恢复。
+    details: 管理服务、查阅日志、恢复管理员密码和控制面板功能。
     link: /guide/manage
 ---
