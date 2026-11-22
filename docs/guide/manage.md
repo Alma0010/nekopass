@@ -18,28 +18,38 @@ sudo nekopassctl panel follow
 | 设置开机自启 | `sudo nekopassctl panel enable` 或 `disable` |
 | 修改面板配置 | `sudo nekopassctl panel edit`，保存后运行 `restart` |
 
-## 设置监听 IP
+## 单独更新管理脚本
 
-同机 Nginx 反向代理时，可以分别设置网页和节点控制的监听 IP。
+在 `sudo nekopassctl` 的主菜单选择「4 更新管理脚本」，也可以直接运行以下命令。
 
-### 单独更新管理脚本
+```bash
+sudo nekopassctl self-update
+```
 
-如果面板运行 v0.20.6，且 `nekopassctl --help` 还没有 `listen-http` 和 `listen-grpc`，在面板服务器运行以下命令即可单独更新管理脚本。
+此操作从 Nekopass 的 GitHub 仓库下载共用的管理脚本。更新期间，面板和 Agent 照常运行。
+
+::: details 旧版脚本首次更新
+
+如果 `nekopassctl --help` 中还没有 `self-update`，在装有 Nekopass 的服务器运行一次以下命令。
 
 ```bash
 (
   set -e
   tmp="$(mktemp)"
   trap 'rm -f -- "$tmp"' EXIT
-  curl -fsSL 'https://raw.githubusercontent.com/Alma0010/nekopass/4ee52addb849078ca3377b77b4b2e1e76afd07cb/scripts/nekopassctl.sh' -o "$tmp"
+  curl -q -fsSL --proto '=https' --proto-redir '=https' \
+    'https://raw.githubusercontent.com/Alma0010/nekopass/main/scripts/nekopassctl.sh' -o "$tmp"
+  grep -Fq 'nekopassctl self-update' "$tmp"
   bash -n "$tmp"
   sudo install -m 755 "$tmp" /usr/local/bin/nekopassctl
 )
 ```
 
-### 设置网页和 Agent 监听
+:::
 
-网页 HTTP 可直接绑定到回环地址。
+## 设置监听 IP
+
+同机 Nginx 反向代理时，可以分别设置网页和节点控制的监听 IP。网页 HTTP 可直接绑定到回环地址。
 
 ```bash
 sudo nekopassctl panel listen-http 127.0.0.1

@@ -7,6 +7,7 @@ usage() {
 Nekopass 服务管理（Linux / systemd）
 
   sudo nekopassctl                         打开交互菜单
+  sudo nekopassctl self-update             单独更新管理脚本
   sudo nekopassctl panel                   管理面板端
   sudo nekopassctl agent                   管理节点端
   sudo nekopassctl agent start             启动服务
@@ -130,9 +131,8 @@ PY
  printf '连接配置已保存。请确认密钥属于此机器原来的节点；状态文件和节点身份均保留。\n'
  printf '执行 nekopassctl %s restart 启动并应用配置。\n' "$SERVICE"
 }
-panel_maintenance() {
- [[ "$CONFIG" == */control.env ]] || { fail '此命令仅适用于面板端。'; return 1; }
- python3 - "$SERVICE" "$@" <<'NEKOPASS_PANEL_UNINSTALL_PYTHON'
+maintenance() {
+ python3 - "${SERVICE:-nekopass}" "$@" <<'NEKOPASS_PANEL_UNINSTALL_PYTHON'
 import argparse
 import contextlib
 import errno
@@ -315,6 +315,12 @@ def manager_needed(root, ignored_units):
     return False
 
 
+def packaged_manager(path):
+    with path.open('rb') as file:
+        return (file.readline(128) == b'#!/usr/bin/env bash\n'
+                and file.readline(128) == b'# Native systemd service manager. No application credentials are executed as shell code.\n')
+
+
 def cleanup_manager(root, ignored_units=(), dry_run=False):
     manager = root / 'usr/local/bin/nekopassctl'
     try:
@@ -331,10 +337,8 @@ def cleanup_manager(root, ignored_units=(), dry_run=False):
             info = manager.lstat()
             if not stat.S_ISREG(info.st_mode) or info.st_uid != owner or info.st_nlink != 1 or (os.name == 'posix' and info.st_mode & 0o022):
                 return
-            with manager.open('rb') as file:
-                if (file.readline(128) != b'#!/usr/bin/env bash\n'
-                        or file.readline(128) != b'# Native systemd service manager. No application credentials are executed as shell code.\n'):
-                    return
+            if not packaged_manager(manager):
+                return
             if manager_needed(root, ignored_units):
                 return
             if not dry_run:
@@ -343,6 +347,40 @@ def cleanup_manager(root, ignored_units=(), dry_run=False):
     except (OSError, subprocess.TimeoutExpired):
         # Cleanup cannot be proven safe. Keep the shared script for a later retry.
         print('未能确认共用管理脚本已闲置，已保留。', file=sys.stderr)
+
+
+def require_installed_manager(manager, root):
+    if not safe_path(manager, root) or manager.stat().st_nlink != 1 or not packaged_manager(manager):
+        raise ValueError(f'找不到可更新的 Nekopass 管理脚本：{manager}')
+
+
+def update_manager(root=pathlib.Path('/')):
+    manager = root / 'usr/local/bin/nekopassctl'
+    url = 'https://raw.githubusercontent.com/Alma0010/nekopass/main/scripts/nekopassctl.sh'
+    require_installed_manager(manager, root)
+    descriptor, name = tempfile.mkstemp(prefix='.nekopassctl-', dir=manager.parent)
+    temporary = pathlib.Path(name)
+    os.close(descriptor)
+    try:
+        subprocess.run(['curl', '-q', '--fail', '--silent', '--show-error', '--location',
+                        '--proto', '=https', '--proto-redir', '=https', '--tlsv1.2',
+                        '--connect-timeout', '15', '--max-time', '60', '--max-filesize', '1048576',
+                        '-o', str(temporary), url], check=True, timeout=65)
+        if temporary.stat().st_size > 1048576 or not packaged_manager(temporary):
+            raise ValueError('下载的文件不是有效的 Nekopass 管理脚本。')
+        subprocess.run(['bash', '-n', str(temporary)], check=True, timeout=10)
+        with directory_lock(manager.parent):
+            # An uninstall may have removed the manager while we were downloading.
+            require_installed_manager(manager, root)
+            if temporary.read_bytes() == manager.read_bytes():
+                print('管理脚本已是最新版本。')
+                return 0
+            temporary.chmod(0o755)
+            temporary.replace(manager)
+    finally:
+        temporary.unlink(missing_ok=True)
+    print('管理脚本已更新。')
+    return 0
 
 
 
@@ -745,9 +783,10 @@ def set_listen_ip(service, listener, address, root=pathlib.Path('/')):
     return 0
 
 
-parser = argparse.ArgumentParser(description='维护面板 systemd 服务', allow_abbrev=False)
+parser = argparse.ArgumentParser(description='维护 Nekopass', allow_abbrev=False)
 parser.add_argument('service')
 actions = parser.add_subparsers(dest='action', required=True)
+actions.add_parser('self-update', help='单独更新管理脚本', allow_abbrev=False)
 remove_panel = actions.add_parser('uninstall', help='卸载面板并保留数据库和运行数据', allow_abbrev=False)
 flags = remove_panel.add_mutually_exclusive_group()
 flags.add_argument('--dry-run', action='store_true', help='仅预览')
@@ -760,14 +799,20 @@ listen_grpc.add_argument('address', metavar='IP|all')
 listen_grpc.set_defaults(listener='grpc')
 args = parser.parse_args()
 try:
+    if args.action == 'self-update':
+        sys.exit(update_manager())
     if args.action == 'uninstall':
         sys.exit(uninstall(args.service, args.dry_run, args.yes))
     sys.exit(set_listen_ip(args.service, args.listener, args.address))
 except (OSError, ValueError, subprocess.SubprocessError) as error:
-    operation = '卸载中止' if args.action == 'uninstall' else '设置监听 IP 失败'
+    operation = {'self-update': '管理脚本更新失败', 'uninstall': '卸载中止'}.get(args.action, '设置监听 IP 失败')
     sys.exit(f'{operation}：{error}')
 
 NEKOPASS_PANEL_UNINSTALL_PYTHON
+}
+panel_maintenance() {
+ [[ "$CONFIG" == */control.env ]] || { fail '此命令仅适用于面板端。'; return 1; }
+ maintenance "$@"
 }
 run_action() {
  case "$1" in
@@ -842,6 +887,11 @@ service_menu() {
 }
 case "${1:-}" in -h|--help|help) usage; exit 0;; esac
 [[ $(id -u) -eq 0 ]] || { fail '请使用 sudo nekopassctl，或由 root 运行。'; exit 1; }
+if [[ "${1:-}" == self-update ]]; then
+ (($# == 1)) || { usage; exit 1; }
+ maintenance self-update
+ exit $?
+fi
 command -v systemctl >/dev/null && [[ -d /run/systemd/system ]] || { fail '需要运行 systemd 的 Linux 服务器。'; exit 1; }
 if (($# > 2)); then
  case "$2" in uninstall|listen-http|listen-grpc) ;; *) usage; exit 1;; esac
@@ -855,11 +905,12 @@ if (($#)); then
 fi
 # The parent ignores Ctrl+C while a menu operation runs in its own subshell.
 while true; do
- printf '\nNekopass 服务管理\n1 面板端  2 节点端  3 独立节点服务  0 退出\n请选择：'
+ printf '\nNekopass 服务管理\n1 面板端  2 节点端  3 独立节点服务  4 更新管理脚本  0 退出\n请选择：'
  read -r choice || exit 0
  case "$choice" in
   0) exit 0;; 1) target=panel;; 2) target=agent;;
   3) systemctl list-unit-files 'nekopass-agent-*' --no-pager; printf '服务名（不含 .service）：'; read -r target || exit 0;;
+  4) (trap - INT; maintenance self-update) && exit 0; continue;;
   *) printf '请输入菜单中的编号。\n'; continue;;
  esac
  select_service "$target" && service_menu
