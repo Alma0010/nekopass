@@ -10,6 +10,7 @@ DEFAULT_DOWNLOAD_BASE='https://github.com/Alma0010/nekopass/releases/download'
 RELEASE_VERSION='v0.20.6'; DOWNLOAD_BASE=$DEFAULT_DOWNLOAD_BASE; PACKAGE_URL=''; PACKAGE=''; SOURCE_DIR=''
 SERVICE='nekopass'; HOST=''; AGENT_HOST=''; AGENT_PORT=''; HTTP_PORT=8080; GRPC_PORT=9443; DB_PORT=''; PG_VERSION=''
 PG_SOURCE=system; ADMIN=admin; SITE=Nekopass; TLS_MODE=plain; TLS_CERT=''; TLS_KEY=''
+DATABASE_URL_FILE=''; external_database=0
 AGENT_INSTALLER='https://github.com/Alma0010/nekopass/releases/latest/download/install-agent.sh'; AGENT_RELEASES='https://github.com/Alma0010/nekopass/releases/download'; FIREWALL=auto; YES=0; SKIP_DEPS=0; DRY_RUN=0; REINSTALL=0; WORK=''
 die() { printf '[nekopass] %s\n' "$*" >&2; exit 1; }
 install_shared_tool() {
@@ -51,6 +52,7 @@ Nekopass 面板一键安装（Debian/Ubuntu，原生 systemd，以 root 执行�
   --postgres-source NAME   新装 PostgreSQL 时使用 system（系统源）或 pgdg（官方源）
   --postgres-version N     选择可用 PostgreSQL 主版本
   --db-port PORT           指定本机 PostgreSQL 集群端口
+  --database-url-file PATH  连接已建好的本机 PostgreSQL，读取仅 root 可读的单行连接地址
   --admin USER             初始管理员，默认 admin；密码随机生成
   --site-name NAME         站点名称
   --agent-tls MODE         plain（测试明文 HTTP/2）、existing（公共 CA 证书）、proxy（已有 TLS 反向代理）
@@ -88,6 +90,7 @@ while (($#)); do
   --postgres-source) value "$@"; PG_SOURCE=$2; shift 2;;
   --postgres-version) value "$@"; PG_VERSION=$2; shift 2;;
   --db-port) value "$@"; DB_PORT=$2; shift 2;;
+  --database-url-file) value "$@"; DATABASE_URL_FILE=$2; shift 2;;
   --admin) value "$@"; ADMIN=$2; shift 2;;
   --site-name) value "$@"; SITE=$2; shift 2;;
   --agent-tls) value "$@"; TLS_MODE=$2; shift 2;;
@@ -117,10 +120,19 @@ port_ok "$HTTP_PORT" && port_ok "$GRPC_PORT" || die '端口须为 1–65535'
 if [[ -n "$PG_VERSION" ]]; then
  [[ "$PG_VERSION" =~ ^[0-9]{2}$ ]] && ((10#$PG_VERSION >= 14)) || die '数据库主版本须为 PostgreSQL 14 或以上'
 fi
+if [[ -n "$DATABASE_URL_FILE" ]]; then
+ [[ -z "$PG_VERSION" && -z "$DB_PORT" ]] || die '连接地址文件已指定数据库，请省略 --postgres-version 和 --db-port'
+ ((!REINSTALL)) || die '已有数据库模式不支持 --reinstall'
+fi
 [[ "$PG_SOURCE" == system || "$PG_SOURCE" == pgdg ]] || die '数据库来源不正确'
 [[ "$TLS_MODE" == plain || "$TLS_MODE" == existing || "$TLS_MODE" == proxy ]] || die '节点 TLS 模式不正确'
 [[ "$FIREWALL" == auto || "$FIREWALL" == skip ]] || die '防火墙模式不正确'
-if ((DRY_RUN)); then log "计划：linux/$ARCH，服务 $SERVICE，网页 $HTTP_PORT，节点 $GRPC_PORT，数据库 $PG_SOURCE/${PG_VERSION:-默认}，版本 $RELEASE_VERSION，清空重装 $REINSTALL"; exit 0; fi
+if ((DRY_RUN)); then
+ database_plan="$PG_SOURCE/${PG_VERSION:-默认}"
+ [[ -z "$DATABASE_URL_FILE" ]] || database_plan='已有 PostgreSQL（连接地址文件）'
+ log "计划：linux/$ARCH，服务 $SERVICE，网页 $HTTP_PORT，节点 $GRPC_PORT，数据库 $database_plan，版本 $RELEASE_VERSION，清空重装 $REINSTALL"
+ exit 0
+fi
 [[ $(id -u) -eq 0 ]] || die '请以 root 执行'
 [[ -d /run/systemd/system ]] && command -v systemctl >/dev/null || die '需要正在运行的 systemd'
 . /etc/os-release
@@ -132,6 +144,12 @@ STATE="/var/lib/$SERVICE"
 for target in "$BASE" "$BASE/web" "$CONFIG" "$CONFIG/control.env" "$CONFIG/tls" "$STATE" "$UNIT" /usr/local/bin/nekopassctl; do
  [[ ! -L "$target" && "$(realpath -m "$target")" == "$target" ]] || die '安装目标不能是符号链接';
 done
+if ((REINSTALL)) && [[ -f "$CONFIG/control.env" ]]; then
+ database_count=$(grep -Ec '^[[:space:]]*NEKOPASS_DATABASE_URL[[:space:]]*=' "$CONFIG/control.env" || true)
+ [[ "$database_count" == 1 ]] &&
+  grep -Eq "^NEKOPASS_DATABASE_URL=postgres://$SERVICE@/$SERVICE[?]host=/var/run/postgresql&port=[0-9]{1,5}&sslmode=disable$" "$CONFIG/control.env" ||
+  die '无法确认当前配置使用系统 PostgreSQL，已停止清空重装'
+fi
 prompt() {
  local key=$1 label=$2 default=$3 answer
  if ((YES)); then printf -v "$key" '%s' "$default"; return; fi
@@ -188,17 +206,42 @@ select_postgres_cluster() {
    [[ "$status" != down ]] || status='已停止'
    printf '  %s) 沿用 PostgreSQL %s · %s · %s（%s）\n' "$((i+1))" "$version" "$name" "$port" "$status"
   done
-  local new_choice=$((${#clusters[@]}+1))
+  local new_choice=$((${#clusters[@]}+1)) external_choice=$((${#clusters[@]}+2))
   printf '  %s) 安装或创建新的 PostgreSQL 集群\n' "$new_choice"
+  printf '  %s) 连接已建好的 PostgreSQL（例如 Docker）\n' "$external_choice"
   while true; do
    prompt choice '选择 PostgreSQL 集群' "$default"
-   if [[ "$choice" =~ ^[1-9][0-9]{0,8}$ ]] && ((choice <= new_choice)); then break; fi
+   if [[ "$choice" =~ ^[1-9][0-9]{0,8}$ ]] && ((choice <= external_choice)); then break; fi
    log '请输入菜单中的编号。'
   done
   if ((choice == new_choice)); then new_pg_cluster=1; return 1; fi
+  if ((choice == external_choice)); then external_database=1; return 1; fi
  fi
  read -r PG_VERSION selected_pg_cluster DB_PORT _ <<< "${clusters[choice-1]}"
  log "沿用 PostgreSQL $PG_VERSION · $selected_pg_cluster · $DB_PORT"
+}
+select_database() {
+ initial_pg_clusters=''
+ selected_pg_cluster=''
+ new_pg_cluster=0
+ if [[ -n "$DATABASE_URL_FILE" ]]; then
+  external_database=1
+ elif command -v pg_lsclusters >/dev/null; then
+  initial_pg_clusters=$(pg_lsclusters --no-header)
+  select_postgres_cluster "$initial_pg_clusters" || true
+ fi
+ if ((!external_database && !new_pg_cluster)) && [[ -z "$selected_pg_cluster" ]]; then
+  local port=${DB_PORT:-5432}
+  if ! awk -v p="$port" '$3==p {found=1} END {exit !found}' <<< "$initial_pg_clusters" && postgres_port_in_use "$port"; then
+   ((!YES)) || die "端口 $port 已有服务，请用 --database-url-file 指定已有 PostgreSQL"
+   log "端口 $port 已被系统集群列表之外的服务占用，可连接已建好的 PostgreSQL（例如 Docker）。"
+   external_database=1
+  fi
+ fi
+ if ((external_database)); then
+  ((!REINSTALL)) || die '已有数据库模式不支持 --reinstall'
+  DB_PORT=${DB_PORT:-5432}
+ fi
 }
 ensure_apt_indexes() {
  if ((!apt_indexes_ready)); then
@@ -208,24 +251,155 @@ ensure_apt_indexes() {
 }
 prepare_install_dependencies() {
  local ca_bundle=${1:-/etc/ssl/certs/ca-certificates.crt} cmd
+ local -a required=(curl python3 openssl systemd-run)
  local -a missing=()
  if ((!SKIP_DEPS)); then
   command -v curl >/dev/null || missing+=(curl)
   [[ -s "$ca_bundle" ]] || missing+=(ca-certificates)
   command -v python3 >/dev/null || missing+=(python3)
   command -v openssl >/dev/null || missing+=(openssl)
-  command -v pg_lsclusters >/dev/null && command -v pg_createcluster >/dev/null && command -v pg_ctlcluster >/dev/null ||
-   missing+=(postgresql-common)
+  if ((external_database)); then
+   psql --version >/dev/null 2>&1 || missing+=(postgresql-client)
+  else
+   command -v pg_lsclusters >/dev/null && command -v pg_createcluster >/dev/null && command -v pg_ctlcluster >/dev/null ||
+    missing+=(postgresql-common)
+  fi
   if ((${#missing[@]})); then
    log "安装缺少的依赖：${missing[*]}"
    ensure_apt_indexes
    apt-get install -y "${missing[@]}"
   fi
  fi
- for cmd in curl python3 openssl pg_lsclusters pg_createcluster pg_ctlcluster systemd-run; do
+ if ((external_database)); then
+  psql --version >/dev/null 2>&1 || die '缺少 PostgreSQL 客户端（psql）'
+ else
+  required+=(pg_lsclusters pg_createcluster pg_ctlcluster)
+ fi
+ for cmd in "${required[@]}"; do
   command -v "$cmd" >/dev/null || die "缺少依赖：$cmd"
  done
 }
+external_postgres() {
+ python3 - "$WORK/control.env" "$@" <<'PY'
+import os
+import pathlib
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+import urllib.parse as url
+
+config = pathlib.Path(sys.argv[1])
+action, *args = sys.argv[2:]
+invalid = '已有数据库需要本机 PostgreSQL 连接地址、数据库名、用户和密码'
+try:
+    if action == 'configure' and not args[0]:
+        port, database, user = args[1:]
+        host, sslmode = '127.0.0.1', 'disable'
+        password = os.environ['NEKOPASS_INSTALL_DB_PASSWORD']
+    else:
+        if action == 'configure':
+            path = pathlib.Path(args[0])
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077 or info.st_size > 8192:
+                sys.exit('连接地址文件必须是仅 root 可读的普通文件')
+            raw = path.read_text(encoding='utf-8').rstrip('\n')
+        else:
+            raw = config.read_text(encoding='utf-8').splitlines()[0].split('=', 1)[1]
+        if any(ord(char) < 33 for char in raw) or re.search(r'%(?![0-9A-Fa-f]{2})', raw):
+            raise ValueError()
+        parsed = url.urlsplit(raw)
+        if (parsed.scheme not in ('postgres', 'postgresql') or parsed.fragment
+                or parsed.query not in ('', 'sslmode=disable', 'sslmode=require')
+                or not parsed.path.startswith('/') or '/' in parsed.path[1:]):
+            raise ValueError()
+        host = '127.0.0.1' if parsed.hostname == 'localhost' else parsed.hostname
+        port = str(parsed.port if parsed.port is not None else 5432)
+        user, password, database = (
+            url.unquote(value or '', errors='strict')
+            for value in (parsed.username, parsed.password, parsed.path[1:])
+        )
+        sslmode = 'require' if parsed.query == 'sslmode=require' else 'disable'
+    # pgx strips leading slashes from the decoded database path.
+    if database.startswith('/'):
+        sys.exit('数据库名不能以 / 开头')
+    if (host not in ('127.0.0.1', '::1') or not re.fullmatch(r'[0-9]{1,5}', port)
+            or not 1 <= int(port) <= 65535 or database in ('postgres', 'template0', 'template1')
+            or any(not value or len(value.encode()) > limit or any(ord(c) < 32 or ord(c) == 127 for c in value)
+                   for value, limit in ((user, 63), (database, 63), (password, 1024)))):
+        raise ValueError()
+except (ValueError, UnicodeError, IndexError, KeyError, OSError):
+    sys.exit(invalid)
+
+if action == 'configure':
+    address = '[::1]' if host == '::1' else host
+    username, secret, db = (url.quote(value, safe='') for value in (user, password, database))
+    authority = f'{username}:{secret}@{address}:{int(port)}'
+    dsn = url.urlunsplit(('postgres', authority, '/' + db, 'sslmode=' + sslmode, ''))
+    config.write_text('NEKOPASS_DATABASE_URL=' + dsn + '\nNEKOPASS_TRUSTED_PROXIES=127.0.0.0/8,::1/128\n',
+                      encoding='utf-8')
+    sys.exit(0)
+
+checks = """
+SELECT CASE
+ WHEN current_setting('server_version_num')::integer < 140000 THEN 'version'
+ WHEN pg_is_in_recovery() OR current_setting('transaction_read_only')::boolean THEN 'readonly'
+ WHEN NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = current_database()
+                  AND datdba = (SELECT oid FROM pg_roles WHERE rolname = current_user)) THEN 'owner'
+ WHEN current_schema() IS DISTINCT FROM 'public' OR NOT has_schema_privilege('public', 'CREATE') THEN 'schema'
+ WHEN EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid
+              WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND c.relkind IN ('r','p','v','m','f'))
+      AND (to_regclass('public.schema_version') IS NULL OR to_regclass('public.users') IS NULL
+           OR to_regclass('public.site_settings') IS NULL) THEN 'shared'
+ ELSE 'ok' END
+"""
+query = checks if action == 'check' else 'SELECT count(*) FROM public.users WHERE is_admin'
+env = {key: value for key, value in os.environ.items() if not key.startswith('PG')}
+env.update(PGHOST=host, PGPORT=port, PGDATABASE=database, PGUSER=user, PGSSLMODE=sslmode, PGCONNECT_TIMEOUT='5')
+with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=config.parent) as passfile:
+    entry = (value.replace('\\', '\\\\').replace(':', '\\:') for value in (host, port, database, user, password))
+    passfile.write(':'.join(entry) + '\n')
+    passfile.flush()
+    env['PGPASSFILE'] = passfile.name
+    try:
+        result = subprocess.run(['psql', '-w', '-XAtq', '-v', 'ON_ERROR_STOP=1', '-c', query],
+                                text=True, capture_output=True, timeout=12, env=env, cwd='/')
+    except (OSError, subprocess.SubprocessError):
+        sys.exit('无法连接已有 PostgreSQL，请检查容器端口和连接信息')
+value = result.stdout.strip()
+if result.returncode:
+    sys.exit('无法访问已有 PostgreSQL，请检查容器端口、数据库名和凭证')
+if action == 'admins' and value.isascii() and value.isdigit():
+    print(value)
+elif action != 'check' or value != 'ok':
+    sys.exit({
+        'version': '已有数据库需使用 PostgreSQL 14 或以上',
+        'readonly': '请选择可写的 PostgreSQL 主库',
+        'owner': '连接用户必须是专用数据库的所有者',
+        'schema': '数据库须使用 public schema，且连接用户需要建表权限',
+        'shared': '该数据库已有其他表，请使用空的专用数据库或原 Nekopass 数据库',
+    }.get(value, '无法确认已有数据库的状态'))
+PY
+}
+prepare_external_database() (
+ set +x
+ if [[ -n "$DATABASE_URL_FILE" ]]; then
+  external_postgres configure "$DATABASE_URL_FILE"
+ else
+  local database user password
+  prompt DB_PORT '已有 PostgreSQL 的本机映射端口' "$DB_PORT"
+  prompt database '已创建的专用数据库名' "$SERVICE"
+  prompt user '数据库所有者用户名' "$SERVICE"
+  printf '数据库密码（输入不回显）：' >&2
+  if [[ -t 0 ]]; then IFS= read -rs password || die '交互输入已结束'
+  else IFS= read -rs password </dev/tty || die '无法交互，请使用 --database-url-file'; fi
+  printf '\n' >&2
+  NEKOPASS_INSTALL_DB_PASSWORD=$password external_postgres configure '' "$DB_PORT" "$database" "$user"
+ fi
+ external_postgres check
+ log '已核对本机 PostgreSQL，沿用指定的数据库'
+)
 log '请选择安装配置；回车使用默认值，可用方向键和删除键编辑。'
 detected=$(hostname -I 2>/dev/null | awk '{print $1}')
 prompt HOST '面板/节点可访问的域名或 IP' "${HOST:-${detected:-127.0.0.1}}"
@@ -249,6 +423,7 @@ port_ok "$AGENT_PORT" || die '节点对外端口不正确'
 [[ "$TLS_MODE" == plain || "$TLS_MODE" == existing || "$TLS_MODE" == proxy ]] || die '节点连接方式不正确'
 export DEBIAN_FRONTEND=noninteractive
 apt_indexes_ready=0
+select_database
 prepare_install_dependencies
 python3 - "$HOST" "$AGENT_HOST" "$ADMIN" "$SITE" <<'PY'
 import ipaddress,re,sys
@@ -267,6 +442,7 @@ cleanup() {
  [[ -z "$WORK" || "$WORK" != /var/tmp/nekopass-panel-install.* ]] || rm -rf -- "$WORK"
 }
 trap cleanup EXIT
+if ((external_database)); then prepare_external_database; fi
 fetch() {
  python3 - "$1" <<'PY'
 import sys,urllib.parse
@@ -349,90 +525,92 @@ for raw,base in [(installer,False),(releases,True)]:
 authority='['+host+']' if ':' in host else host
 print(json.dumps(dict(site_name=site,panel_url='http://'+authority+':'+http,agent_host=agent,agent_port=int(grpc),agent_transport='plain' if transport=='plain' else 'tls',installer_url=installer,release_base_url=releases,agent_version='latest',install_token_minutes=30)))
 PY
-initial_pg_clusters=$(pg_lsclusters --no-header)
-selected_pg_cluster=''
-new_pg_cluster=0
-if ! select_postgres_cluster "$initial_pg_clusters"; then
- probe_port=${DB_PORT:-5432}
- if awk -v p="$probe_port" '$3==p {found=1} END {exit !found}' <<< "$initial_pg_clusters"; then
-  [[ -z "$DB_PORT" ]] || die '指定端口上的 PostgreSQL 集群与所选版本不匹配或不可用，请检查集群'
- elif postgres_port_in_use "$probe_port"; then
-  die "端口 $probe_port 已被系统集群列表之外的服务占用，无法自动沿用或新建 PostgreSQL"
- fi
- if [[ -z "$PG_VERSION" ]]; then
-  installed=$(installed_postgres_versions)
-  if [[ -n "$installed" ]]; then
-   log "已安装的 PostgreSQL 版本：$(tr '\n' ' ' <<< "$installed")"
-   prompt PG_VERSION 'PostgreSQL 主版本' "${installed##*$'\n'}"
-   [[ "$PG_VERSION" =~ ^[0-9]{2}$ ]] && ((10#$PG_VERSION >= 14)) || die '数据库主版本须为 PostgreSQL 14 或以上'
+configure_native_postgres() {
+ if [[ -z "$selected_pg_cluster" ]]; then
+  probe_port=${DB_PORT:-5432}
+  if awk -v p="$probe_port" '$3==p {found=1} END {exit !found}' <<< "$initial_pg_clusters"; then
+   [[ -z "$DB_PORT" ]] || die '指定端口上的 PostgreSQL 集群与所选版本不匹配或不可用，请检查集群'
+  elif postgres_port_in_use "$probe_port"; then
+   die "端口 $probe_port 已被系统集群列表之外的服务占用，无法自动沿用或新建 PostgreSQL"
   fi
- fi
- if [[ -z "$PG_VERSION" ]] || ! postgres_installed "$PG_VERSION"; then
-  ((!SKIP_DEPS)) || die '未找到已安装的 PostgreSQL 14 或以上版本，请检查版本或允许安装依赖'
-  prompt PG_SOURCE '数据库来源（system 系统源 / pgdg 官方源）' "$PG_SOURCE"
-  [[ "$PG_SOURCE" == system || "$PG_SOURCE" == pgdg ]] || die '数据库来源不正确'
-  if [[ "$PG_SOURCE" == pgdg ]]; then
-   [[ "$VERSION_CODENAME" =~ ^[a-z]+$ ]] || die '系统发行代号不正确'
-   # PostgreSQL official repository instructions: https://www.postgresql.org/download/linux/debian/
-   fetch https://www.postgresql.org/media/keys/ACCC4CF8.asc "$WORK/pgdg.asc"
-   install -d /usr/share/postgresql-common/pgdg
-   install -m 644 "$WORK/pgdg.asc" /usr/share/postgresql-common/pgdg/nekopass.asc
-   printf 'Types: deb\nURIs: https://apt.postgresql.org/pub/repos/apt\nSuites: %s-pgdg\nArchitectures: %s\nComponents: main\nSigned-By: /usr/share/postgresql-common/pgdg/nekopass.asc\n' "$VERSION_CODENAME" "$ARCH" > /etc/apt/sources.list.d/nekopass-pgdg.sources
-   chmod 644 /etc/apt/sources.list.d/nekopass-pgdg.sources
-   apt_indexes_ready=0
-  fi
-  ensure_apt_indexes
-  available=$(apt-cache search --names-only '^postgresql-[0-9]+$' | awk '{sub("postgresql-", "", $1); if($1>=14) print $1}' | sort -n | tr '\n' ' ')
-  [[ -n "$available" ]] || die '软件源没有 PostgreSQL 14 或以上版本'
-  log "可用 PostgreSQL 版本：$available"
   if [[ -z "$PG_VERSION" ]]; then
-   prompt PG_VERSION 'PostgreSQL 主版本' "$(awk '{print $NF}' <<< "$available")"
+   installed=$(installed_postgres_versions)
+   if [[ -n "$installed" ]]; then
+    log "已安装的 PostgreSQL 版本：$(tr '\n' ' ' <<< "$installed")"
+    prompt PG_VERSION 'PostgreSQL 主版本' "${installed##*$'\n'}"
+    [[ "$PG_VERSION" =~ ^[0-9]{2}$ ]] && ((10#$PG_VERSION >= 14)) || die '数据库主版本须为 PostgreSQL 14 或以上'
+   fi
   fi
-  [[ "$PG_VERSION" =~ ^[0-9]{2}$ && " $available " == *" $PG_VERSION "* ]] || die '选择的数据库版本不在可用列表中'
-  apt-get install -y "postgresql-$PG_VERSION"
+  if [[ -z "$PG_VERSION" ]] || ! postgres_installed "$PG_VERSION"; then
+   ((!SKIP_DEPS)) || die '未找到已安装的 PostgreSQL 14 或以上版本，请检查版本或允许安装依赖'
+   prompt PG_SOURCE '数据库来源（system 系统源 / pgdg 官方源）' "$PG_SOURCE"
+   [[ "$PG_SOURCE" == system || "$PG_SOURCE" == pgdg ]] || die '数据库来源不正确'
+   if [[ "$PG_SOURCE" == pgdg ]]; then
+    [[ "$VERSION_CODENAME" =~ ^[a-z]+$ ]] || die '系统发行代号不正确'
+    # PostgreSQL official repository instructions: https://www.postgresql.org/download/linux/debian/
+    fetch https://www.postgresql.org/media/keys/ACCC4CF8.asc "$WORK/pgdg.asc"
+    install -d /usr/share/postgresql-common/pgdg
+    install -m 644 "$WORK/pgdg.asc" /usr/share/postgresql-common/pgdg/nekopass.asc
+    printf 'Types: deb\nURIs: https://apt.postgresql.org/pub/repos/apt\nSuites: %s-pgdg\nArchitectures: %s\nComponents: main\nSigned-By: /usr/share/postgresql-common/pgdg/nekopass.asc\n' "$VERSION_CODENAME" "$ARCH" > /etc/apt/sources.list.d/nekopass-pgdg.sources
+    chmod 644 /etc/apt/sources.list.d/nekopass-pgdg.sources
+    apt_indexes_ready=0
+   fi
+   ensure_apt_indexes
+   available=$(apt-cache search --names-only '^postgresql-[0-9]+$' | awk '{sub("postgresql-", "", $1); if($1>=14) print $1}' | sort -n | tr '\n' ' ')
+   [[ -n "$available" ]] || die '软件源没有 PostgreSQL 14 或以上版本'
+   log "可用 PostgreSQL 版本：$available"
+   if [[ -z "$PG_VERSION" ]]; then
+    prompt PG_VERSION 'PostgreSQL 主版本' "$(awk '{print $NF}' <<< "$available")"
+   fi
+   [[ "$PG_VERSION" =~ ^[0-9]{2}$ && " $available " == *" $PG_VERSION "* ]] || die '选择的数据库版本不在可用列表中'
+   apt-get install -y "postgresql-$PG_VERSION"
+  fi
+  postgres_installed "$PG_VERSION" || die '所选数据库版本尚未安装'
+  pg_clusters=$(pg_lsclusters --no-header)
+  # An APT install may have created a default cluster. Reuse it if it is
+  # new, or if the user did not explicitly ask for a separate cluster.
+  default_db=$(awk -v v="$PG_VERSION" -v separate="$new_pg_cluster" '
+   NR == FNR { occupied[$3] = 1; next }
+   $1 == v && ($4 == "online" || $4 == "down") && (!separate || !($3 in occupied)) { print $3; exit }
+  ' <(printf '%s\n' "$initial_pg_clusters") <(printf '%s\n' "$pg_clusters"))
+  if [[ -z "$default_db" ]]; then
+   default_db=$(awk 'NF { occupied[$3] = 1 } END { port=5432; while (port in occupied) port++; print port }' <<< "$pg_clusters")
+  fi
+  prompt DB_PORT '本机数据库端口' "${DB_PORT:-$default_db}"
+  port_ok "$DB_PORT" || die '数据库端口不正确'
+  DB_PORT=$((10#$DB_PORT))
+  if ((new_pg_cluster)) && awk -v p="$DB_PORT" '$3==p {found=1} END {exit !found}' <<< "$initial_pg_clusters"; then
+   die '该端口已有 PostgreSQL 集群，请为新集群选择其他端口'
+  fi
  fi
- postgres_installed "$PG_VERSION" || die '所选数据库版本尚未安装'
  pg_clusters=$(pg_lsclusters --no-header)
- # An APT install may have created a default cluster. Reuse it if it is
- # new, or if the user did not explicitly ask for a separate cluster.
- default_db=$(awk -v v="$PG_VERSION" -v separate="$new_pg_cluster" '
-  NR == FNR { occupied[$3] = 1; next }
-  $1 == v && ($4 == "online" || $4 == "down") && (!separate || !($3 in occupied)) { print $3; exit }
- ' <(printf '%s\n' "$initial_pg_clusters") <(printf '%s\n' "$pg_clusters"))
- if [[ -z "$default_db" ]]; then
-  default_db=$(awk 'NF { occupied[$3] = 1 } END { port=5432; while (port in occupied) port++; print port }' <<< "$pg_clusters")
+ cluster=$(awk -v v="$PG_VERSION" -v p="$DB_PORT" '$1==v && $3==p && ($4=="online" || $4=="down") {print $2;exit}' <<< "$pg_clusters")
+ [[ -z "$selected_pg_cluster" || "$cluster" == "$selected_pg_cluster" ]] || die '所选 PostgreSQL 集群已变化，请重新运行安装器'
+ if [[ -z "$cluster" ]]; then
+  if awk -v p="$DB_PORT" '$3==p {found=1} END {exit !found}' <<< "$pg_clusters"; then die '该端口已有不可沿用的 PostgreSQL 集群，请选择其他端口'; fi
+  if postgres_port_in_use "$DB_PORT"; then die "端口 $DB_PORT 已被占用，请为新集群选择其他端口"; fi
+  cluster=$SERVICE
+  if awk -v v="$PG_VERSION" -v c="$cluster" '$1==v && $2==c {found=1} END {exit !found}' <<< "$pg_clusters"; then cluster="$SERVICE-$DB_PORT"; fi
+  pg_createcluster "$PG_VERSION" "$cluster" --port "$DB_PORT" --start
+ else
+  pg_ctlcluster "$PG_VERSION" "$cluster" start ||
+   { pg_ctlcluster "$PG_VERSION" "$cluster" status >/dev/null && pg_isready -h /var/run/postgresql -p "$DB_PORT" >/dev/null; } ||
+   die '所选 PostgreSQL 集群未在 /var/run/postgresql 就绪'
  fi
- prompt DB_PORT '本机数据库端口' "${DB_PORT:-$default_db}"
- port_ok "$DB_PORT" || die '数据库端口不正确'
- DB_PORT=$((10#$DB_PORT))
- if ((new_pg_cluster)) && awk -v p="$DB_PORT" '$3==p {found=1} END {exit !found}' <<< "$initial_pg_clusters"; then
-  die '该端口已有 PostgreSQL 集群，请为新集群选择其他端口'
+}
+if ((!external_database)); then
+ configure_native_postgres
+ systemctl enable postgresql >/dev/null
+ systemctl enable "postgresql@$PG_VERSION-$cluster" >/dev/null
+ existing=$(postgres_run psql -p "$DB_PORT" -XAtqc "SELECT count(*) FROM pg_database WHERE datname='$SERVICE'")
+ role=$(postgres_run psql -p "$DB_PORT" -XAtqc "SELECT count(*) FROM pg_roles WHERE rolname='$SERVICE'")
+ if [[ "$existing" != 0 ]]; then
+  owner=$(postgres_run psql -p "$DB_PORT" -XAtqc "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname='$SERVICE'")
+  [[ "$owner" == "$SERVICE" ]] || die '同名数据库不属于该服务，无法继续安装；原数据库未修改'
+  if ((!REINSTALL)); then log '复用已有数据库，保留用户、订单及配置数据'; fi
  fi
 fi
-pg_clusters=$(pg_lsclusters --no-header)
-cluster=$(awk -v v="$PG_VERSION" -v p="$DB_PORT" '$1==v && $3==p && ($4=="online" || $4=="down") {print $2;exit}' <<< "$pg_clusters")
-[[ -z "$selected_pg_cluster" || "$cluster" == "$selected_pg_cluster" ]] || die '所选 PostgreSQL 集群已变化，请重新运行安装器'
-if [[ -z "$cluster" ]]; then
- if awk -v p="$DB_PORT" '$3==p {found=1} END {exit !found}' <<< "$pg_clusters"; then die '该端口已有不可沿用的 PostgreSQL 集群，请选择其他端口'; fi
- if postgres_port_in_use "$DB_PORT"; then die "端口 $DB_PORT 已被占用，请为新集群选择其他端口"; fi
- cluster=$SERVICE
- if awk -v v="$PG_VERSION" -v c="$cluster" '$1==v && $2==c {found=1} END {exit !found}' <<< "$pg_clusters"; then cluster="$SERVICE-$DB_PORT"; fi
- pg_createcluster "$PG_VERSION" "$cluster" --port "$DB_PORT" --start
-else
- pg_ctlcluster "$PG_VERSION" "$cluster" start ||
-  { pg_ctlcluster "$PG_VERSION" "$cluster" status >/dev/null && pg_isready -h /var/run/postgresql -p "$DB_PORT" >/dev/null; } ||
-  die '所选 PostgreSQL 集群未在 /var/run/postgresql 就绪'
-fi
-systemctl enable postgresql >/dev/null
-systemctl enable "postgresql@$PG_VERSION-$cluster" >/dev/null
-existing=$(postgres_run psql -p "$DB_PORT" -XAtqc "SELECT count(*) FROM pg_database WHERE datname='$SERVICE'")
 id "$SERVICE" >/dev/null 2>&1 || useradd --system --user-group --home-dir /nonexistent --shell /usr/sbin/nologin "$SERVICE"
-role=$(postgres_run psql -p "$DB_PORT" -XAtqc "SELECT count(*) FROM pg_roles WHERE rolname='$SERVICE'")
-if [[ "$existing" != 0 ]]; then
- owner=$(postgres_run psql -p "$DB_PORT" -XAtqc "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname='$SERVICE'")
- [[ "$owner" == "$SERVICE" ]] || die '同名数据库不属于该服务，无法继续安装；原数据库未修改'
- if ((!REINSTALL)); then log '复用已有数据库，保留用户、订单及配置数据'; fi
-fi
 if ((REINSTALL)); then
  log "清空重装：服务 $SERVICE，PostgreSQL $PG_VERSION / 端口 $DB_PORT，数据库 $SERVICE。所有用户、余额、订单、节点和规则将删除。"
  if ((!YES)); then
@@ -462,20 +640,24 @@ if ((REINSTALL)); then
  done
  rm -f -- "$CONFIG/control.env"
 fi
-if [[ "$role" == 0 ]]; then postgres_run createuser -p "$DB_PORT" "$SERVICE"; fi
-if [[ "$existing" == 0 ]]; then postgres_run createdb -p "$DB_PORT" -O "$SERVICE" "$SERVICE"; fi
+if ((!external_database)); then
+ if [[ "$role" == 0 ]]; then postgres_run createuser -p "$DB_PORT" "$SERVICE"; fi
+ if [[ "$existing" == 0 ]]; then postgres_run createdb -p "$DB_PORT" -O "$SERVICE" "$SERVICE"; fi
+fi
 install -d -m 755 "$BASE/bin" "$BASE/web" "$CONFIG"
 install -m 755 "$WORK/release/bin/nekopass" "$BASE/bin/nekopass"
 cp -r "$WORK/release/web/." "$BASE/web/"
 # Installation is private by default; published web files must be readable by the service.
 find "$BASE/web" -type d -exec chmod 755 {} +
 find "$BASE/web" -type f -exec chmod 644 {} +
-python3 - "$SERVICE" "$DB_PORT" "$WORK/control.env" <<'PY'
+if ((!external_database)); then
+ python3 - "$SERVICE" "$DB_PORT" "$WORK/control.env" <<'PY'
 import pathlib,sys,urllib.parse
 name,port,path=sys.argv[1:]
 dsn='postgres://'+urllib.parse.quote(name,safe='')+'@/'+urllib.parse.quote(name,safe='')+'?host=/var/run/postgresql&port='+port+'&sslmode=disable'
 pathlib.Path(path).write_text('NEKOPASS_DATABASE_URL='+dsn+'\nNEKOPASS_TRUSTED_PROXIES=127.0.0.0/8,::1/128\n')
 PY
+fi
 GRPC_BIND=0.0.0.0
 if [[ "$TLS_MODE" == existing ]]; then
  install -d -m 750 -g "$SERVICE" "$CONFIG/tls"
@@ -485,12 +667,18 @@ if [[ "$TLS_MODE" == existing ]]; then
 elif [[ "$TLS_MODE" == proxy ]]; then GRPC_BIND=127.0.0.1
 else GRPC_BIND=0.0.0.0; fi
 install -m 600 "$WORK/control.env" "$CONFIG/control.env"
+postgres_after=''
+postgres_requires=''
+if ((!external_database)); then
+ postgres_after=" postgresql@$PG_VERSION-$cluster.service"
+ postgres_requires="Requires=postgresql@$PG_VERSION-$cluster.service"
+fi
 cat > "$WORK/panel.service" <<UNIT
 [Unit]
 Description=Nekopass control panel
-After=network-online.target postgresql@$PG_VERSION-$cluster.service
+After=network-online.target$postgres_after
 Wants=network-online.target
-Requires=postgresql@$PG_VERSION-$cluster.service
+$postgres_requires
 [Service]
 Type=simple
 User=$SERVICE
@@ -518,7 +706,11 @@ install_shared_tool "$WORK/nekopass-update" "$BASE/bin/nekopass-update"
 run_panel() { systemd-run --quiet --wait --pipe --collect -p "User=$SERVICE" -p "EnvironmentFile=$CONFIG/control.env" -- "$BASE/bin/nekopass" "$@"; }
 run_panel -mode migrate
 run_panel -mode init-settings < "$WORK/settings.json"
-admins=$(postgres_run psql -p "$DB_PORT" -d "$SERVICE" -XAtqc "SELECT count(*) FROM users WHERE is_admin")
+if ((external_database)); then
+ admins=$(external_postgres admins)
+else
+ admins=$(postgres_run psql -p "$DB_PORT" -d "$SERVICE" -XAtqc "SELECT count(*) FROM users WHERE is_admin")
+fi
 if [[ "$admins" == 0 ]]; then
  log '创建管理员并随机生成密码'
  run_panel -mode bootstrap -random-password -admin-name "$ADMIN" > "$WORK/admin-result"

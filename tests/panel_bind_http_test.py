@@ -242,13 +242,49 @@ class PanelListenIPTests(unittest.TestCase):
         self.assertNotIn(uri, ' '.join(args))
         self.assertFalse(any(key.startswith('PG') for key in run.call_args.kwargs['env']))
 
-    def test_unverified_transport_dsn_never_invokes_psql(self):
-        self.config.write_text(f'NEKOPASS_DATABASE_URL=postgres://{self.service}@localhost/{self.service}\n',
-                               encoding='utf-8')
+    def test_transport_query_uses_loopback_credentials_only_in_child_environment(self):
         info = {'User': self.service, 'EnvironmentFiles': f'{self.config} (ignore_errors=no)'}
-        with patch.object(self.module.subprocess, 'run') as run, self.assertRaisesRegex(ValueError, '无法核对'):
-            self.read_transport(self.service, self.root, info)
-        run.assert_not_called()
+        for host, address, sslmode, mode in (
+                ('127.0.0.1', '127.0.0.1', 'disable', 'tls'),
+                ('[::1]', '::1', 'require', 'plain')):
+            with self.subTest(host=host):
+                uri = f'postgres://panel%40local:fixture-pass%3A%25@{host}:5544/db%3Dfixture?sslmode={sslmode}'
+                self.config.write_text('NEKOPASS_DATABASE_URL=' + uri + '\n', encoding='utf-8')
+                answer = subprocess.CompletedProcess([], 0, stdout=mode + '\n')
+                with (patch.dict(os.environ, PGHOST='ignored', PGOPTIONS='ignored', PGSERVICE='ignored'),
+                      patch.object(self.module.subprocess, 'run', return_value=answer) as run):
+                    self.assertEqual(self.read_transport(self.service, self.root, info), mode)
+                    self.assertEqual(os.environ['PGHOST'], 'ignored')
+                args = run.call_args.args[0]
+                self.assertEqual(args[:-1], ['runuser', '-u', self.service, '--', 'psql', '-w', '-XAtq', '-c'])
+                self.assertIn('agent_transport', args[-1])
+                self.assertEqual({key: value for key, value in run.call_args.kwargs['env'].items()
+                                  if key.startswith('PG')}, {
+                    'PGHOST': address,
+                    'PGPORT': '5544',
+                    'PGDATABASE': 'db=fixture',
+                    'PGUSER': 'panel@local',
+                    'PGPASSWORD': 'fixture-pass:%',
+                    'PGSSLMODE': sslmode,
+                    'PGCONNECT_TIMEOUT': '5',
+                })
+
+    def test_unverified_transport_dsn_never_invokes_psql(self):
+        info = {'User': self.service, 'EnvironmentFiles': f'{self.config} (ignore_errors=no)'}
+        for uri in (
+                f'postgres://{self.service}@localhost/{self.service}',
+                'postgres://panel@127.0.0.1:5432/db?sslmode=disable',
+                'postgres://panel:fixture-pass@192.0.2.20:5432/db?sslmode=require',
+                'postgres://panel:fixture-pass@127.0.0.1:65536/db?sslmode=disable',
+                'postgres://panel:fixture-pass@127.0.0.1:5432/db?sslmode=disable&host=192.0.2.20',
+                'postgres://panel:fixture-pass@127.0.0.1:5432/%2Fdb?sslmode=disable',
+                'postgres://panel:fixture-pass%00@127.0.0.1:5432/db?sslmode=disable',
+                'postgres://panel:fixture-pass%FF@127.0.0.1:5432/db?sslmode=disable'):
+            with self.subTest(uri=uri):
+                self.config.write_text('NEKOPASS_DATABASE_URL=' + uri + '\n', encoding='utf-8')
+                with patch.object(self.module.subprocess, 'run') as run, self.assertRaisesRegex(ValueError, '无法核对'):
+                    self.read_transport(self.service, self.root, info)
+                run.assert_not_called()
 
     def test_refuses_an_effective_execstart_override(self):
         self.override = self.args.replace(' -http :8080 ', ' -http 0.0.0.0:8081 ')

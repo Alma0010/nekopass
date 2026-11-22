@@ -149,6 +149,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.parse
 
 
 def safe_path(path, root, *, directory=False, state_file=False):
@@ -648,28 +649,55 @@ def wait_panel_ready(unit, host, port, web):
 
 def read_agent_transport(service, root, info):
     config = root / 'etc' / service / 'control.env'
-    unknown = '无法核对 Agent 连接方式。请检查原生安装的数据库配置与 PostgreSQL 服务。'
+    unknown = '无法核对 Agent 连接方式。请检查安装时的 PostgreSQL 连接设置和数据库状态。'
     if (info.get('User') != service or info.get('EnvironmentFiles') != f'{config} (ignore_errors=no)'
             or not safe_path(config, root)):
         raise ValueError(unknown)
-    # Read only the installer-generated peer-authenticated endpoint. Never
-    # source the environment file or pass a connection secret in argv.
-    contents = config.read_text('utf-8')
+    # Read only installer-generated endpoints. Never source the environment
+    # file or pass a connection secret in argv.
+    try:
+        contents = config.read_text('utf-8')
+    except UnicodeError:
+        raise ValueError(unknown) from None
     # EnvironmentFile may allow leading blanks and continuations. Do not
     # authorize a loopback bind from an ambiguous local database assignment.
     if '\\' + '\n' in contents:
         raise ValueError(unknown)
     values = re.findall(r'(?m)^[ \t]*NEKOPASS_DATABASE_URL[ \t]*=[ \t]*([^\r\n]*)$', contents)
-    native_uri = re.escape(f'postgres://{service}@/{service}?host=/var/run/postgresql&port=') + r'([0-9]{1,5})&sslmode=disable'
-    match = re.fullmatch(native_uri, values[0]) if len(values) == 1 else None
-    if not match or not 1 <= int(match[1]) <= 65535:
+    if len(values) != 1:
         raise ValueError(unknown)
-    query = "SELECT COALESCE(NULLIF(config->>'agent_transport',''),'tls') FROM site_settings WHERE id=1"
+    dsn = values[0]
+    native_uri = re.escape(f'postgres://{service}@/{service}?host=/var/run/postgresql&port=') + r'([0-9]{1,5})&sslmode=disable'
+    match = re.fullmatch(native_uri, dsn)
+    command = ['runuser', '-u', service, '--', 'psql', '-w', '-XAtq']
     env = {key: value for key, value in os.environ.items() if not key.startswith('PG')}
+    if match and 1 <= int(match[1]) <= 65535:
+        command.extend(['-h', '/var/run/postgresql', '-p', match[1], '-U', service, '-d', service])
+    else:
+        component = r'(?:[A-Za-z0-9._~-]|%[0-9A-F]{2})+'
+        tcp_uri = rf'''
+            postgres:// (?P<user>{component}) : (?P<password>{component}) @
+            (?P<host>127\.0\.0\.1|\[::1\]) : (?P<port>[1-9][0-9]{{0,4}}) /
+            (?P<database>{component}) \?sslmode=(?P<sslmode>disable|require)
+        '''
+        match = re.fullmatch(tcp_uri, dsn, re.VERBOSE)
+        if not match or not 1 <= int(match['port']) <= 65535:
+            raise ValueError(unknown)
+        encoded = (match['user'], match['password'], match['database'])
+        try:
+            user, password, database = (urllib.parse.unquote(part, errors='strict') for part in encoded)
+        except UnicodeError:
+            raise ValueError(unknown) from None
+        decoded = (user, password, database)
+        if (database.startswith('/')
+                or any(ord(char) < 32 or ord(char) == 127 for value in decoded for char in value)
+                or tuple(urllib.parse.quote(value, safe='') for value in decoded) != encoded):
+            raise ValueError(unknown)
+        env.update(PGHOST=match['host'].strip('[]'), PGPORT=match['port'], PGDATABASE=database,
+                   PGUSER=user, PGPASSWORD=password, PGSSLMODE=match['sslmode'], PGCONNECT_TIMEOUT='5')
+    query = "SELECT COALESCE(NULLIF(config->>'agent_transport',''),'tls') FROM site_settings WHERE id=1"
     try:
-        result = subprocess.run(['runuser', '-u', service, '--', 'psql', '-w', '-XAtq',
-                                 '-h', '/var/run/postgresql', '-p', match[1],
-                                 '-U', service, '-d', service, '-c', query],
+        result = subprocess.run([*command, '-c', query],
                                 text=True, capture_output=True, cwd='/', env=env, timeout=8)
     except (OSError, subprocess.SubprocessError):
         raise ValueError(unknown) from None
