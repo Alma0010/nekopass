@@ -62,7 +62,7 @@ Nekopass 面板一键安装（Debian/Ubuntu，原生 systemd，以 root 执行�
   --service-name NAME      默认 nekopass，测试可用 nekopass-panel-xxx
   --reinstall              清空该服务的面板数据库并全新安装，忽略已有 control.env
   --yes                    使用参数和默认值，不询问
-  --skip-dependencies      已具备依赖时跳过软件包安装
+  --skip-dependencies      禁止通过 APT 安装软件包，缺少必需依赖时停止
   --dry-run                只验证参数，不下载或修改机器
   -h, --help               显示帮助
 
@@ -114,7 +114,9 @@ port_ok "$HTTP_PORT" && port_ok "$GRPC_PORT" || die '端口须为 1–65535'
 [[ -z "$DB_PORT" ]] || port_ok "$DB_PORT" || die '数据库端口不正确'
 [[ -z "$DB_PORT" ]] || DB_PORT=$((10#$DB_PORT))
 [[ -z "$AGENT_PORT" ]] || port_ok "$AGENT_PORT" || die '节点对外端口不正确'
-[[ -z "$PG_VERSION" || "$PG_VERSION" =~ ^[0-9]{2}$ ]] || die '数据库主版本不正确'
+if [[ -n "$PG_VERSION" ]]; then
+ [[ "$PG_VERSION" =~ ^[0-9]{2}$ ]] && ((10#$PG_VERSION >= 14)) || die '数据库主版本须为 PostgreSQL 14 或以上'
+fi
 [[ "$PG_SOURCE" == system || "$PG_SOURCE" == pgdg ]] || die '数据库来源不正确'
 [[ "$TLS_MODE" == plain || "$TLS_MODE" == existing || "$TLS_MODE" == proxy ]] || die '节点 TLS 模式不正确'
 [[ "$FIREWALL" == auto || "$FIREWALL" == skip ]] || die '防火墙模式不正确'
@@ -143,6 +145,26 @@ prompt() {
  printf -v "$key" '%s' "${answer:-$default}"
 }
 postgres_installed() { [[ -x "/usr/lib/postgresql/$1/bin/postgres" ]]; }
+installed_postgres_versions() {
+ local path version
+ for path in /usr/lib/postgresql/*; do
+  version=${path##*/}
+  [[ "$version" =~ ^[0-9]{2}$ ]] && ((10#$version >= 14)) && postgres_installed "$version" || continue
+  printf '%s\n' "$version"
+ done | sort -n
+}
+postgres_port_in_use() {
+ local port=$1 port_hex table
+ [[ -S "/var/run/postgresql/.s.PGSQL.$port" || -S "/tmp/.s.PGSQL.$port" ]] && return 0
+ printf -v port_hex '%04X' "$port"
+ for table in /proc/net/tcp /proc/net/tcp6; do
+  [[ -r "$table" ]] || continue
+  if awk -v port="$port_hex" '$4 == "0A" && $2 ~ (":" port "$") { found=1; exit } END { exit !found }' "$table"; then
+   return 0
+  fi
+ done
+ return 1
+}
 select_postgres_cluster() {
  local version name port status choice default=1 online=0 i
  local -a clusters=()
@@ -178,6 +200,32 @@ select_postgres_cluster() {
  read -r PG_VERSION selected_pg_cluster DB_PORT _ <<< "${clusters[choice-1]}"
  log "沿用 PostgreSQL $PG_VERSION · $selected_pg_cluster · $DB_PORT"
 }
+ensure_apt_indexes() {
+ if ((!apt_indexes_ready)); then
+  apt-get update
+  apt_indexes_ready=1
+ fi
+}
+prepare_install_dependencies() {
+ local ca_bundle=${1:-/etc/ssl/certs/ca-certificates.crt} cmd
+ local -a missing=()
+ if ((!SKIP_DEPS)); then
+  command -v curl >/dev/null || missing+=(curl)
+  [[ -s "$ca_bundle" ]] || missing+=(ca-certificates)
+  command -v python3 >/dev/null || missing+=(python3)
+  command -v openssl >/dev/null || missing+=(openssl)
+  command -v pg_lsclusters >/dev/null && command -v pg_createcluster >/dev/null && command -v pg_ctlcluster >/dev/null ||
+   missing+=(postgresql-common)
+  if ((${#missing[@]})); then
+   log "安装缺少的依赖：${missing[*]}"
+   ensure_apt_indexes
+   apt-get install -y "${missing[@]}"
+  fi
+ fi
+ for cmd in curl python3 openssl pg_lsclusters pg_createcluster pg_ctlcluster systemd-run; do
+  command -v "$cmd" >/dev/null || die "缺少依赖：$cmd"
+ done
+}
 log '请选择安装配置；回车使用默认值，可用方向键和删除键编辑。'
 detected=$(hostname -I 2>/dev/null | awk '{print $1}')
 prompt HOST '面板/节点可访问的域名或 IP' "${HOST:-${detected:-127.0.0.1}}"
@@ -200,11 +248,8 @@ port_ok "$AGENT_PORT" || die '节点对外端口不正确'
 [[ "$PG_SOURCE" == system || "$PG_SOURCE" == pgdg ]] || die '数据库来源不正确'
 [[ "$TLS_MODE" == plain || "$TLS_MODE" == existing || "$TLS_MODE" == proxy ]] || die '节点连接方式不正确'
 export DEBIAN_FRONTEND=noninteractive
-if ((!SKIP_DEPS)); then
- apt-get update
- apt-get install -y curl ca-certificates python3 openssl postgresql-common
-fi
-for cmd in curl python3 openssl pg_lsclusters pg_createcluster systemd-run; do command -v "$cmd" >/dev/null || die "缺少依赖：$cmd"; done
+apt_indexes_ready=0
+prepare_install_dependencies
 python3 - "$HOST" "$AGENT_HOST" "$ADMIN" "$SITE" <<'PY'
 import ipaddress,re,sys
 host,agent,admin,site=sys.argv[1:]
@@ -308,34 +353,51 @@ initial_pg_clusters=$(pg_lsclusters --no-header)
 selected_pg_cluster=''
 new_pg_cluster=0
 if ! select_postgres_cluster "$initial_pg_clusters"; then
- prompt PG_SOURCE '数据库来源（system 系统源 / pgdg 官方源）' "$PG_SOURCE"
- [[ "$PG_SOURCE" == system || "$PG_SOURCE" == pgdg ]] || die '数据库来源不正确'
- if [[ "$PG_SOURCE" == pgdg && $SKIP_DEPS == 0 ]]; then
-  [[ "$VERSION_CODENAME" =~ ^[a-z]+$ ]] || die '系统发行代号不正确'
-  # PostgreSQL official repository instructions: https://www.postgresql.org/download/linux/debian/
-  fetch https://www.postgresql.org/media/keys/ACCC4CF8.asc "$WORK/pgdg.asc"
-  install -d /usr/share/postgresql-common/pgdg
-  install -m 644 "$WORK/pgdg.asc" /usr/share/postgresql-common/pgdg/nekopass.asc
-  printf 'Types: deb\nURIs: https://apt.postgresql.org/pub/repos/apt\nSuites: %s-pgdg\nArchitectures: %s\nComponents: main\nSigned-By: /usr/share/postgresql-common/pgdg/nekopass.asc\n' "$VERSION_CODENAME" "$ARCH" > /etc/apt/sources.list.d/nekopass-pgdg.sources
-  chmod 644 /etc/apt/sources.list.d/nekopass-pgdg.sources
-  apt-get update
+ probe_port=${DB_PORT:-5432}
+ if awk -v p="$probe_port" '$3==p {found=1} END {exit !found}' <<< "$initial_pg_clusters"; then
+  [[ -z "$DB_PORT" ]] || die '指定端口上的 PostgreSQL 集群与所选版本不匹配或不可用，请检查集群'
+ elif postgres_port_in_use "$probe_port"; then
+  die "端口 $probe_port 已被系统集群列表之外的服务占用，无法自动沿用或新建 PostgreSQL"
  fi
- available=$(apt-cache search --names-only '^postgresql-[0-9]+$' | awk '{sub("postgresql-", "", $1); if($1>=14) print $1}' | sort -n | tr '\n' ' ')
- [[ -n "$available" ]] || die '软件源没有 PostgreSQL 14 或以上版本'
- log "可用 PostgreSQL 版本：$available"
- default_pg=''
- if ((!new_pg_cluster)); then default_pg=$(awk '$4=="online" {print $1;exit}' <<< "$initial_pg_clusters"); fi
- [[ " $available " == *" ${default_pg:-none} "* ]] || default_pg=$(awk '{print $NF}' <<< "$available")
- prompt PG_VERSION 'PostgreSQL 主版本' "${PG_VERSION:-$default_pg}"
- [[ "$PG_VERSION" =~ ^[0-9]{2}$ && " $available " == *" $PG_VERSION "* ]] || die '选择的数据库版本不在可用列表中'
- if ((!SKIP_DEPS)); then apt-get install -y "postgresql-$PG_VERSION"; fi
+ if [[ -z "$PG_VERSION" ]]; then
+  installed=$(installed_postgres_versions)
+  if [[ -n "$installed" ]]; then
+   log "已安装的 PostgreSQL 版本：$(tr '\n' ' ' <<< "$installed")"
+   prompt PG_VERSION 'PostgreSQL 主版本' "${installed##*$'\n'}"
+   [[ "$PG_VERSION" =~ ^[0-9]{2}$ ]] && ((10#$PG_VERSION >= 14)) || die '数据库主版本须为 PostgreSQL 14 或以上'
+  fi
+ fi
+ if [[ -z "$PG_VERSION" ]] || ! postgres_installed "$PG_VERSION"; then
+  ((!SKIP_DEPS)) || die '未找到已安装的 PostgreSQL 14 或以上版本，请检查版本或允许安装依赖'
+  prompt PG_SOURCE '数据库来源（system 系统源 / pgdg 官方源）' "$PG_SOURCE"
+  [[ "$PG_SOURCE" == system || "$PG_SOURCE" == pgdg ]] || die '数据库来源不正确'
+  if [[ "$PG_SOURCE" == pgdg ]]; then
+   [[ "$VERSION_CODENAME" =~ ^[a-z]+$ ]] || die '系统发行代号不正确'
+   # PostgreSQL official repository instructions: https://www.postgresql.org/download/linux/debian/
+   fetch https://www.postgresql.org/media/keys/ACCC4CF8.asc "$WORK/pgdg.asc"
+   install -d /usr/share/postgresql-common/pgdg
+   install -m 644 "$WORK/pgdg.asc" /usr/share/postgresql-common/pgdg/nekopass.asc
+   printf 'Types: deb\nURIs: https://apt.postgresql.org/pub/repos/apt\nSuites: %s-pgdg\nArchitectures: %s\nComponents: main\nSigned-By: /usr/share/postgresql-common/pgdg/nekopass.asc\n' "$VERSION_CODENAME" "$ARCH" > /etc/apt/sources.list.d/nekopass-pgdg.sources
+   chmod 644 /etc/apt/sources.list.d/nekopass-pgdg.sources
+   apt_indexes_ready=0
+  fi
+  ensure_apt_indexes
+  available=$(apt-cache search --names-only '^postgresql-[0-9]+$' | awk '{sub("postgresql-", "", $1); if($1>=14) print $1}' | sort -n | tr '\n' ' ')
+  [[ -n "$available" ]] || die '软件源没有 PostgreSQL 14 或以上版本'
+  log "可用 PostgreSQL 版本：$available"
+  if [[ -z "$PG_VERSION" ]]; then
+   prompt PG_VERSION 'PostgreSQL 主版本' "$(awk '{print $NF}' <<< "$available")"
+  fi
+  [[ "$PG_VERSION" =~ ^[0-9]{2}$ && " $available " == *" $PG_VERSION "* ]] || die '选择的数据库版本不在可用列表中'
+  apt-get install -y "postgresql-$PG_VERSION"
+ fi
  postgres_installed "$PG_VERSION" || die '所选数据库版本尚未安装'
  pg_clusters=$(pg_lsclusters --no-header)
  # An APT install may have created a default cluster. Reuse it if it is
  # new, or if the user did not explicitly ask for a separate cluster.
  default_db=$(awk -v v="$PG_VERSION" -v separate="$new_pg_cluster" '
   NR == FNR { occupied[$3] = 1; next }
-  $1 == v && (!separate || !($3 in occupied)) { print $3; exit }
+  $1 == v && ($4 == "online" || $4 == "down") && (!separate || !($3 in occupied)) { print $3; exit }
  ' <(printf '%s\n' "$initial_pg_clusters") <(printf '%s\n' "$pg_clusters"))
  if [[ -z "$default_db" ]]; then
   default_db=$(awk 'NF { occupied[$3] = 1 } END { port=5432; while (port in occupied) port++; print port }' <<< "$pg_clusters")
@@ -348,15 +410,18 @@ if ! select_postgres_cluster "$initial_pg_clusters"; then
  fi
 fi
 pg_clusters=$(pg_lsclusters --no-header)
-cluster=$(awk -v v="$PG_VERSION" -v p="$DB_PORT" '$1==v && $3==p {print $2;exit}' <<< "$pg_clusters")
+cluster=$(awk -v v="$PG_VERSION" -v p="$DB_PORT" '$1==v && $3==p && ($4=="online" || $4=="down") {print $2;exit}' <<< "$pg_clusters")
 [[ -z "$selected_pg_cluster" || "$cluster" == "$selected_pg_cluster" ]] || die '所选 PostgreSQL 集群已变化，请重新运行安装器'
 if [[ -z "$cluster" ]]; then
- if awk -v p="$DB_PORT" '$3==p {found=1} END {exit !found}' <<< "$pg_clusters"; then die '该端口属于另一个 PostgreSQL 版本'; fi
+ if awk -v p="$DB_PORT" '$3==p {found=1} END {exit !found}' <<< "$pg_clusters"; then die '该端口已有不可沿用的 PostgreSQL 集群，请选择其他端口'; fi
+ if postgres_port_in_use "$DB_PORT"; then die "端口 $DB_PORT 已被占用，请为新集群选择其他端口"; fi
  cluster=$SERVICE
  if awk -v v="$PG_VERSION" -v c="$cluster" '$1==v && $2==c {found=1} END {exit !found}' <<< "$pg_clusters"; then cluster="$SERVICE-$DB_PORT"; fi
  pg_createcluster "$PG_VERSION" "$cluster" --port "$DB_PORT" --start
 else
- pg_ctlcluster "$PG_VERSION" "$cluster" start || pg_isready -h /var/run/postgresql -p "$DB_PORT" >/dev/null || die '所选 PostgreSQL 集群未在 /var/run/postgresql 就绪'
+ pg_ctlcluster "$PG_VERSION" "$cluster" start ||
+  { pg_ctlcluster "$PG_VERSION" "$cluster" status >/dev/null && pg_isready -h /var/run/postgresql -p "$DB_PORT" >/dev/null; } ||
+  die '所选 PostgreSQL 集群未在 /var/run/postgresql 就绪'
 fi
 systemctl enable postgresql >/dev/null
 systemctl enable "postgresql@$PG_VERSION-$cluster" >/dev/null

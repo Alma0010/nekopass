@@ -12,12 +12,16 @@ wget https://github.com/Alma0010/nekopass/releases/latest/download/install-panel
 
 ### 选择 PostgreSQL 集群
 
-安装器会列出本机 `pg_lsclusters` 能识别的 PostgreSQL 14 或以上集群，并显示版本、名称、端口及运行状态。输入编号沿用已有集群，直接回车优先选择正在运行的集群。需要单独建库集群时，选择新建，再选择软件源和主版本。找不到可用集群时，安装器会引导你新建。
+安装器会列出本机 `pg_lsclusters` 能识别的 PostgreSQL 14 或以上集群。直接回车优先沿用正在运行的集群，也可以输入编号选择。依赖齐全时会跳过 APT，否则只安装缺少的软件包。
 
-例如，本机已有 PostgreSQL 16，端口是 5432，且安装依赖已齐全，可以直接指定该集群。
+需要单独使用一个集群时，在菜单选择新建。所选主版本已安装时可直接创建集群，需要安装该版本时再选择软件源。找不到可用集群时，安装器会进入新建流程。
+
+宝塔或 Docker 部署的 PostgreSQL 可能由各自的工具管理。已有服务占用默认或指定的数据库端口，且找不到可沿用的集群时，安装器会提示并停止新建。
+
+例如，可用参数指定端口为 5432 的 PostgreSQL 16 集群。
 
 ```bash
-sudo bash install-panel.sh --host panel.example.com --postgres-version 16 --db-port 5432 --skip-dependencies --yes
+sudo bash install-panel.sh --host panel.example.com --postgres-version 16 --db-port 5432 --yes
 ```
 
 ### 登录后台
@@ -52,7 +56,7 @@ sudo bash install-panel.sh --package ./nekopass-panel-linux-amd64.tar.gz
 | `--agent-host` / `--agent-port` | 节点连接的外部地址 / 端口，适用于代理或 NAT。 |
 | `--postgres-source` | 新装 PostgreSQL 时选择 `system`（系统源）或 `pgdg`（官方源）。 |
 | `--postgres-version` / `--db-port` | 指定本机 PostgreSQL 主版本和端口，以沿用对应集群。 |
-| `--skip-dependencies` | 已满足依赖时跳过软件包安装。 |
+| `--skip-dependencies` | 跳过 APT，适用于依赖已齐全的服务器。 |
 | `--admin` / `--site-name` | 初始管理员和站点名称。 |
 | `--service-name` | 指定面板服务名，默认是 `nekopass`。 |
 | `--reinstall` | 清空该服务的面板数据库并全新安装。 |
