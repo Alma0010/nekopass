@@ -20,6 +20,9 @@ Nekopass 服务管理（Linux / systemd）
   sudo nekopassctl agent edit              编辑连接配置，保存后手动重启
   sudo nekopassctl agent configure         填写主控 HTTP/HTTPS 地址和节点密钥
   sudo nekopassctl panel edit-service      编辑 systemd 服务覆盖配置
+  sudo nekopassctl panel listen-http 127.0.0.1  设置网页监听 IP
+  sudo nekopassctl panel listen-grpc 127.0.0.1  设置 Agent 控制监听 IP
+  两个监听命令均可填 all，恢复对应端口监听所有地址。
   sudo nekopassctl panel reset-password    重新生成管理员密码，并注销旧会话
   sudo nekopassctl agent check-update      检查 GitHub 最新版本（panel 也可用）
   sudo nekopassctl agent update            更新并重启服务，保留配置和状态
@@ -127,13 +130,16 @@ PY
  printf '连接配置已保存。请确认密钥属于此机器原来的节点；状态文件和节点身份均保留。\n'
  printf '执行 nekopassctl %s restart 启动并应用配置。\n' "$SERVICE"
 }
-uninstall_panel() {
- [[ "$CONFIG" == */control.env ]] || { fail '此卸载命令仅适用于面板端。'; return 1; }
+panel_maintenance() {
+ [[ "$CONFIG" == */control.env ]] || { fail '此命令仅适用于面板端。'; return 1; }
  python3 - "$SERVICE" "$@" <<'NEKOPASS_PANEL_UNINSTALL_PYTHON'
 import argparse
 import contextlib
 import errno
 import fcntl
+import http.client
+import ipaddress
+import json
 import os
 import pathlib
 import re
@@ -142,6 +148,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 
 
 def safe_path(path, root, *, directory=False, state_file=False):
@@ -173,8 +180,8 @@ def safe_path(path, root, *, directory=False, state_file=False):
 def unit_info(path):
     result = subprocess.run(
         ['systemctl', 'show', '--all', '--no-pager',
-         '-p', 'LoadState,ActiveState,FragmentPath,ExecStart,EnvironmentFiles,User,DropInPaths,Paths,Unit,NeedDaemonReload',
-         path.name], text=True, capture_output=True,
+         '-p', 'LoadState,ActiveState,MainPID,FragmentPath,ExecStart,EnvironmentFiles,User,DropInPaths,Paths,Unit,NeedDaemonReload',
+         path.name], text=True, capture_output=True, timeout=10,
     )
     info = {}
     for line in result.stdout.splitlines():
@@ -224,7 +231,7 @@ def update_lock(path, root):
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise ValueError('面板正在更新，请等更新结束后再卸载。') from None
+            raise ValueError('面板正在更新或执行其他管理操作，请稍后再试。') from None
         yield
 
 
@@ -508,16 +515,258 @@ def uninstall(service, dry_run, yes, root=pathlib.Path('/'), *, locked=False):
     return 0
 
 
-parser = argparse.ArgumentParser(description='卸载面板并保留数据库与运行数据', allow_abbrev=False)
+
+def atomic_write_unit(unit, data):
+    info = unit.stat()
+    if info.st_nlink != 1:
+        raise ValueError('不能覆盖带硬链接的服务单元。')
+    descriptor, name = tempfile.mkstemp(prefix='.' + unit.name + '-', dir=unit.parent)
+    temporary = pathlib.Path(name)
+    try:
+        with os.fdopen(descriptor, 'wb') as target:
+            if os.name == 'posix':
+                os.fchown(target.fileno(), info.st_uid, info.st_gid)
+            temporary.chmod(stat.S_IMODE(info.st_mode))
+            target.write(data)
+            target.flush()
+            os.fsync(target.fileno())
+        temporary.replace(unit)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def process_listens_on(pid, host, port):
+    proc = pathlib.Path('/proc') / pid
+    sockets = set()
+    for descriptor in (proc / 'fd').iterdir():
+        try:
+            target = str(descriptor.readlink())
+        except FileNotFoundError:
+            continue
+        if target.startswith('socket:[') and target.endswith(']'):
+            sockets.add(target[8:-1])
+    requested = ipaddress.ip_address(host) if host else None
+    requested = getattr(requested, 'ipv4_mapped', None) or requested
+    found = False
+    for kind in ('tcp', 'tcp6'):
+        try:
+            with (proc / 'net' / kind).open(encoding='ascii') as table:
+                next(table, None)
+                for line in table:
+                    fields = line.split()
+                    # 0A is TCP_LISTEN. Inode ownership identifies this service.
+                    if len(fields) < 10 or fields[3] != '0A' or fields[9] not in sockets:
+                        continue
+                    encoded, listen_port = fields[1].split(':')
+                    if int(listen_port, 16) != port:
+                        continue
+                    packed = b''.join(int(encoded[i:i+8], 16).to_bytes(4, sys.byteorder)
+                                      for i in range(0, len(encoded), 8))
+                    address = ipaddress.ip_address(packed)
+                    address = getattr(address, 'ipv4_mapped', None) or address
+                    matches = address.is_unspecified if requested is None or requested.is_unspecified else address == requested
+                    if not matches:
+                        return False
+                    found = True
+        except FileNotFoundError:
+            continue
+    return found
+
+
+def wait_panel_ready(unit, host, port, web):
+    web_host, web_port = web
+    try:
+        wildcard = not web_host or ipaddress.ip_address(web_host).is_unspecified
+    except ValueError:
+        wildcard = False
+    if wildcard:
+        hosts = ('127.0.0.1', '::1')
+    else:
+        hosts = (web_host,)
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        info = unit_info(unit)
+        pid = info.get('MainPID', '')
+        if info.get('ActiveState') == 'active' and pid.isascii() and pid.isdigit() and int(pid) > 0:
+            try:
+                listening = process_listens_on(pid, host, port)
+            except FileNotFoundError:
+                listening = False
+            if listening:
+                for probe in hosts:
+                    connection = http.client.HTTPConnection(probe, web_port, timeout=1)
+                    try:
+                        connection.request('GET', '/healthz')
+                        response = connection.getresponse()
+                        if response.status == 200 and json.loads(response.read(256)) == {'status': 'ok'}:
+                            return True
+                    except (OSError, http.client.HTTPException, ValueError):
+                        pass
+                    finally:
+                        connection.close()
+        time.sleep(.25)
+    return False
+
+
+def read_agent_transport(service, root, info):
+    config = root / 'etc' / service / 'control.env'
+    unknown = '无法核对 Agent 连接方式。请检查原生安装的数据库配置与 PostgreSQL 服务。'
+    if (info.get('User') != service or info.get('EnvironmentFiles') != f'{config} (ignore_errors=no)'
+            or not safe_path(config, root)):
+        raise ValueError(unknown)
+    # Read only the installer-generated peer-authenticated endpoint. Never
+    # source the environment file or pass a connection secret in argv.
+    contents = config.read_text('utf-8')
+    # EnvironmentFile may allow leading blanks and continuations. Do not
+    # authorize a loopback bind from an ambiguous local database assignment.
+    if '\\' + '\n' in contents:
+        raise ValueError(unknown)
+    values = re.findall(r'(?m)^[ \t]*NEKOPASS_DATABASE_URL[ \t]*=[ \t]*([^\r\n]*)$', contents)
+    native_uri = re.escape(f'postgres://{service}@/{service}?host=/var/run/postgresql&port=') + r'([0-9]{1,5})&sslmode=disable'
+    match = re.fullmatch(native_uri, values[0]) if len(values) == 1 else None
+    if not match or not 1 <= int(match[1]) <= 65535:
+        raise ValueError(unknown)
+    query = "SELECT COALESCE(NULLIF(config->>'agent_transport',''),'tls') FROM site_settings WHERE id=1"
+    env = {key: value for key, value in os.environ.items() if not key.startswith('PG')}
+    try:
+        result = subprocess.run(['runuser', '-u', service, '--', 'psql', '-w', '-XAtq',
+                                 '-h', '/var/run/postgresql', '-p', match[1],
+                                 '-U', service, '-d', service, '-c', query],
+                                text=True, capture_output=True, cwd='/', env=env, timeout=8)
+    except (OSError, subprocess.SubprocessError):
+        raise ValueError(unknown) from None
+    mode = result.stdout.strip()
+    if result.returncode or mode not in ('plain', 'tls'):
+        raise ValueError(unknown)
+    return mode
+
+
+def listen_address(host, port):
+    return f'[{host}]:{port}' if ':' in host else f'{host}:{port}'
+
+
+def listen_option(arguments, flag):
+    options = list(re.finditer(rf'(?<!\S)--?{flag}(?:=|[ \t]+)(?P<listen>\S+)', arguments))
+    if len(options) != 1:
+        raise ValueError(f'启动命令必须包含一个可识别的 -{flag} 参数。')
+    endpoint = re.fullmatch(r'(?:\[([^\]\s]+)\]|([^:\s]*)):([0-9]{1,5})', options[0]['listen'])
+    if not endpoint or not 1 <= int(endpoint[3]) <= 65535:
+        raise ValueError(f'无法识别当前 -{flag} 参数中的监听端口。')
+    return options[0], (endpoint[1] or endpoint[2] or '', int(endpoint[3]))
+
+
+def listen_plan(service, listener, host, root, unit):
+    info = unit_info(unit)
+    if (not safe_path(unit, root) or info.get('LoadState') != 'loaded'
+            or info.get('FragmentPath') != str(unit) or info.get('NeedDaemonReload') == 'yes'):
+        raise ValueError('无法核对面板服务单元，请检查配置并重新加载 systemd。')
+    active = info.get('ActiveState')
+    if active not in ('active', 'inactive', 'failed'):
+        raise ValueError('服务正在切换状态，请稍后再试。')
+    previous = unit.read_bytes()
+    text = previous.decode('utf-8')
+    starts = list(re.finditer(r'(?m)^ExecStart=(?P<arguments>[^\r\n]+)\r?$', text))
+    if len(starts) != 1:
+        raise ValueError('无法识别启动命令，请用 edit-service 调整自定义配置。')
+    arguments = starts[0]['arguments']
+    executable = (root / 'opt' / service / 'bin/nekopass').as_posix()
+    argv = arguments.split()
+    if (not argv or argv[0] != executable or any(c in arguments for c in "\"'\\;$%")
+            or not starts_with(info, argv, exact=True)):
+        raise ValueError('发现自定义或未加载的启动命令，请用 edit-service 调整。')
+    option, (_, port) = listen_option(arguments, listener)
+    web = (host, port) if listener == 'http' else listen_option(arguments, 'http')[1]
+    left, right = option.span('listen')
+    changed_arguments = arguments[:left] + listen_address(host, port) + arguments[right:]
+    left, right = starts[0].span('arguments')
+    changed = (text[:left] + changed_arguments + text[right:]).encode('utf-8')
+    return previous, changed, port, web, info, changed_arguments.split()
+
+
+def run_panel_systemctl(*args):
+    subprocess.run(['systemctl', *args], check=True, timeout=45)
+
+
+def set_listen_ip(service, listener, address, root=pathlib.Path('/')):
+    if not re.fullmatch(r'nekopass(?:-panel-[a-z0-9]{1,16})?', service):
+        raise ValueError('面板服务名不正确。')
+    if address == 'all':
+        host = ''
+    else:
+        if '%' in address:
+            raise ValueError('请输入不带端口和区域后缀的 IP 地址，或填写 all。')
+        try:
+            host = str(ipaddress.ip_address(address))
+        except ValueError:
+            raise ValueError('请输入 IPv4、IPv6 地址，或填写 all。') from None
+    unit = root / 'etc/systemd/system' / (service + '.service')
+    with update_lock(root / 'run/lock' / (service + '-update.lock'), root):
+        previous, changed, port, web, info, argv = listen_plan(service, listener, host, root, unit)
+        requested = ipaddress.ip_address(host) if host else None
+        requested = getattr(requested, 'ipv4_mapped', None) or requested
+        loopback = requested is not None and requested.is_loopback
+        if listener == 'grpc' and loopback and read_agent_transport(service, root, info) != 'tls':
+            raise ValueError('请先在面板中选择 HTTPS 节点连接方式。HTTP 直连模式会将回环控制端口扩大为全地址监听。')
+        running = info['ActiveState'] == 'active'
+        label = '网页' if listener == 'http' else 'Agent 控制'
+        endpoint = listen_address(host, port)
+        if changed == previous:
+            if running and not wait_panel_ready(unit, host, port, web):
+                raise ValueError('当前监听与配置不符，请检查面板状态。')
+            print(f'{label}已设置为监听 {endpoint}。')
+            return 0
+        atomic_write_unit(unit, changed)
+        restart_attempted = False
+        try:
+            run_panel_systemctl('daemon-reload')
+            if not starts_with(unit_info(unit), argv, exact=True):
+                raise ValueError('systemd 未采用新的启动命令，请检查 ExecStart 覆盖配置。')
+            if running:
+                restart_attempted = True
+                run_panel_systemctl('restart', unit.name)
+                if not wait_panel_ready(unit, host, port, web):
+                    raise ValueError(f'{label}监听或网页健康检查失败。')
+        except (OSError, ValueError, subprocess.SubprocessError, KeyboardInterrupt) as error:
+            if unit.read_bytes() != changed:
+                raise ValueError('服务单元已有其他更改，请核对当前配置。') from None
+            try:
+                atomic_write_unit(unit, previous)
+                run_panel_systemctl('daemon-reload')
+                if restart_attempted:
+                    run_panel_systemctl('restart', unit.name)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                raise ValueError('设置失败，未能完整恢复服务，请检查 systemd 状态。') from None
+            detail = str(error) if isinstance(error, ValueError) else '无法完成服务配置或重启。'
+            raise ValueError(f'{detail} 已还原原来的监听配置。') from None
+    if running:
+        print(f'{label}正在监听 {endpoint}。')
+    else:
+        print(f'{label}已设置为监听 {endpoint}，下次启动时生效。')
+    return 0
+
+
+parser = argparse.ArgumentParser(description='维护面板 systemd 服务', allow_abbrev=False)
 parser.add_argument('service')
-flags = parser.add_mutually_exclusive_group()
+actions = parser.add_subparsers(dest='action', required=True)
+remove_panel = actions.add_parser('uninstall', help='卸载面板并保留数据库和运行数据', allow_abbrev=False)
+flags = remove_panel.add_mutually_exclusive_group()
 flags.add_argument('--dry-run', action='store_true', help='仅预览')
 flags.add_argument('--yes', action='store_true', help='跳过交互确认')
+listen_http = actions.add_parser('listen-http', help='设置网页监听 IP', allow_abbrev=False)
+listen_http.add_argument('address', metavar='IP|all')
+listen_http.set_defaults(listener='http')
+listen_grpc = actions.add_parser('listen-grpc', help='设置 Agent 控制监听 IP', allow_abbrev=False)
+listen_grpc.add_argument('address', metavar='IP|all')
+listen_grpc.set_defaults(listener='grpc')
 args = parser.parse_args()
 try:
-    sys.exit(uninstall(args.service, args.dry_run, args.yes))
-except (OSError, ValueError, subprocess.CalledProcessError) as error:
-    sys.exit(f'卸载中止：{error}')
+    if args.action == 'uninstall':
+        sys.exit(uninstall(args.service, args.dry_run, args.yes))
+    sys.exit(set_listen_ip(args.service, args.listener, args.address))
+except (OSError, ValueError, subprocess.SubprocessError) as error:
+    operation = '卸载中止' if args.action == 'uninstall' else '设置监听 IP 失败'
+    sys.exit(f'{operation}：{error}')
+
 NEKOPASS_PANEL_UNINSTALL_PYTHON
 }
 run_action() {
@@ -535,7 +784,17 @@ run_action() {
   configure) configure_agent;;
   reset-password) reset_password;;
   edit-service) systemctl edit "$SERVICE.service" && systemctl daemon-reload;;
-  uninstall) shift; uninstall_panel "$@";;
+  uninstall) panel_maintenance "$@";;
+  listen-http|listen-grpc)
+   if (($# == 1)); then
+    [[ "$CONFIG" == */control.env ]] || { fail '此命令仅适用于面板端。'; return 1; }
+    local address listener=网页
+    [[ "$1" != listen-grpc ]] || listener='Agent 控制'
+    printf '%s监听 IP（默认 127.0.0.1，all 监听所有地址）：' "$listener"
+    read -r address || return 1
+    set -- "$1" "${address:-127.0.0.1}"
+   fi
+   panel_maintenance "$@";;
   check-update|update)
    local base updater
    case "$SERVICE" in nekopass|nekopass-agent) base=/opt/nekopass;; *) base="/opt/$SERVICE";; esac
@@ -561,7 +820,7 @@ service_menu() {
   printf '1 启动  2 停止  3 重启  4 查看状态\n5 开启自启  6 关闭自启  7 最近日志  8 实时日志\n9 编辑配置  10 填写节点连接信息  11 编辑服务配置\n'
   [[ "$CONFIG" != */control.env ]] || printf '12 重新生成管理员密码\n'
   printf '13 检查更新  14 更新到最新版本\n'
-  [[ "$CONFIG" != */control.env ]] || printf '15 卸载面板\n'
+  [[ "$CONFIG" != */control.env ]] || printf '15 卸载面板  16 设置网页监听 IP  17 设置 Agent 控制监听 IP\n'
   printf '0 返回/退出\n请选择：'
   read -r choice || return 0
   case "$choice" in
@@ -570,7 +829,7 @@ service_menu() {
    9) action=edit;; 10) action=configure;; 11) action=edit-service;;
    12) action=reset-password;;
    13) action=check-update;; 14) action=update;;
-   15) action=uninstall;;
+   15) action=uninstall;; 16) action=listen-http;; 17) action=listen-grpc;;
    *) printf '请输入菜单中的编号。\n'; continue;;
   esac
   # Ctrl+C leaves the current operation (e.g. live logs), keeping the menu usable.
@@ -584,7 +843,9 @@ service_menu() {
 case "${1:-}" in -h|--help|help) usage; exit 0;; esac
 [[ $(id -u) -eq 0 ]] || { fail '请使用 sudo nekopassctl，或由 root 运行。'; exit 1; }
 command -v systemctl >/dev/null && [[ -d /run/systemd/system ]] || { fail '需要运行 systemd 的 Linux 服务器。'; exit 1; }
-[[ $# -le 2 || "${2:-}" == uninstall ]] || { usage; exit 1; }
+if (($# > 2)); then
+ case "$2" in uninstall|listen-http|listen-grpc) ;; *) usage; exit 1;; esac
+fi
 trap ':' INT
 if (($#)); then
  select_service "$@" || exit 1

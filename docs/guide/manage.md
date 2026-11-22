@@ -18,6 +18,32 @@ sudo nekopassctl panel follow
 | 设置开机自启 | `sudo nekopassctl panel enable` 或 `disable` |
 | 修改面板配置 | `sudo nekopassctl panel edit`，保存后运行 `restart` |
 
+## 设置监听 IP
+
+同机 Nginx 反向代理时，可以分别设置网页和节点控制的监听 IP。网页 HTTP 可直接绑定到回环地址。
+
+```bash
+sudo nekopassctl panel listen-http 127.0.0.1
+```
+
+将节点 gRPC 绑定到回环地址前，先在「系统设置 → 站点与连接」将「节点连接方式」设为 HTTPS，再运行以下命令。
+
+```bash
+sudo nekopassctl panel listen-grpc 127.0.0.1
+```
+
+每条命令沿用对应的现有端口，支持本机其他 IPv4 或 IPv6 地址，例如 `::1`。将地址换成 `all` 可恢复对应端口监听所有地址。使用自定义服务名时，把 `panel` 换成完整服务名。
+
+节点使用 HTTP 直连时，面板会将 gRPC 的回环监听扩大到所有地址。因此 `listen-grpc` 在绑定回环前，会从原生安装使用的 PostgreSQL 确认节点连接方式为 HTTPS。无法确认时，脚本会在修改前停止。
+
+修改后，已运行的面板会短暂重启，Agent 随后重新连接。启动验证失败时会还原原服务配置。上游地址见[反向代理](./proxy.md)。
+
+如果本机的管理工具没有这些命令，可在保存新版 `nekopassctl.sh` 的目录运行以下命令。现有面板程序可直接使用。
+
+```bash
+sudo install -m 755 ./nekopassctl.sh /usr/local/bin/nekopassctl
+```
+
 ## 重置管理员密码
 
 ```bash

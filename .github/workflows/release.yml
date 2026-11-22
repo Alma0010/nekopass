@@ -44,6 +44,7 @@ jobs:
           python3 -m unittest discover -s tests -p installer_url_test.py
           python3 -m unittest discover -s tests -p uninstaller_test.py
           python3 -m unittest discover -s tests -p panel_uninstall_test.py
+          python3 -m unittest discover -s tests -p panel_bind_http_test.py
           for script in scripts/install-panel.sh scripts/install-agent.sh scripts/uninstall-agent.sh scripts/nekopassctl.sh; do
             bash -n "$script"
           done
