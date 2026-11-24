@@ -5,6 +5,8 @@ import {consumeCreateIntent} from './page'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, APIError, type Node, type NodeDeleteResult, type NodeInput, type NodeGroup,type NodeGroupMember } from './api'
 import Icon from './Icon.vue'
+import TableSettings from './TableSettings.vue'
+import { useTableLayout, type DataColumn, type SortableTable } from './table-layout'
 import GroupTags from './GroupTags.vue'
 import LimitInput from './LimitInput.vue'
 import NodeProtocolsDialog from './NodeProtocolsDialog.vue'
@@ -15,18 +17,42 @@ import TLSInboundsDialog from './TLSInboundsDialog.vue'
 import {newerVersion,planNodeUpdates,type UpdateSkip} from './node-updates'
 import type {NodeTransportInput,NodeSecurityInput} from './node-protocol'
 import {nodeTLSDefaults as tlsDefaults,nodeTLSConfig as tlsConfig,applyNodeTransport,applyNodeSecurity} from './node-protocol'
-const props=withDefaults(defineProps<{ nodes: Node[]; groups: NodeGroup[]; view?: 'nodes' | 'groups' }>(), {view:'nodes'})
+const props=withDefaults(defineProps<{ nodes: Node[]; groups: NodeGroup[]; view?: 'nodes' | 'groups'; viewerId: number }>(), {view:'nodes'})
 const nodeScope=ref(new URLSearchParams(location.search).get('status')==='offline'?'offline':'')
 const nodeSearch=ref(''), nodeGroup=ref(0), selectedIDs=ref(new Set<number>())
+const nodeTable = ref<SortableTable>()
+function nodeStatus(node: Node) {
+  if (node.uninstall_status?.state === 'queued') return '等待卸载'
+  if (node.uninstall_status?.state === 'failed') return '卸载失败'
+  return !node.enabled ? '已停用' : node.online ? '在线' : '离线'
+}
+function nodeSyncStatus(node: Node) {
+  return node.sync_error || (node.applied_revision >= node.config_revision && node.applied_revision ? '已同步' : '等待同步')
+}
+const nodeColumns: DataColumn<Node>[] = [
+  { id: 'name', label: '名称', width: 140, fluid: true, sortValue: row => row.name },
+  { id: 'public_address', label: '公网地址', width: 155, fluid: true, sortValue: row => row.public_address || undefined },
+  { id: 'group_ids', label: '节点组', width: 145, fluid: true, sortValue: row => row.group_ids.map(id => props.groups.find(group => group.id === id)?.name).filter(Boolean).join(' ') || undefined },
+  { id: 'role', label: '用途', width: 112, sortValue: row => Number(row.ingress_enabled) + 2 * Number(row.tunnel_exit_enabled) },
+  { id: 'status', label: '状态', width: 100, fluid: true, sortValue: nodeStatus },
+  { id: 'sync', label: '配置同步', width: 130, fluid: true, sortValue: nodeSyncStatus },
+  { id: 'agent_version', label: '节点版本', width: 145, fluid: true, sortValue: row => row.agent_version || undefined },
+  { id: 'tls', label: 'TLS 证书', width: 130, fluid: true, sortValue: row => row.tunnel_security === 'tls' ? (row.tls_not_after || undefined) : undefined },
+  { id: 'active_connections', label: '转发连接', width: 108, sortValue: row => row.active_connections },
+]
+const {
+  columns, displayColumns, settings, saveSettings, sortChanged, resizeColumn, sortRows,
+} = useTableLayout(() => `nekopass:table:nodes:${props.viewerId}`, nodeColumns, nodeTable)
 const visibleNodes=computed(()=>{
  const search=nodeSearch.value.trim().toLowerCase()
- return props.nodes.filter(node=>{
+ const filtered=props.nodes.filter(node=>{
   if(nodeScope.value==='offline'&&!(node.enabled&&!node.online))return false
   if(nodeScope.value==='online'&&!(node.enabled&&node.online))return false
   if(nodeScope.value==='disabled'&&node.enabled)return false
   if(nodeGroup.value&& !node.group_ids.includes(nodeGroup.value))return false
   return !search||`${node.name} ${node.public_address||''}`.toLowerCase().includes(search)
  })
+ return sortRows(filtered)
 })
 const selectedNodes=computed(()=>visibleNodes.value.filter(node=>selectedIDs.value.has(node.id)))
 const allVisibleSelected=computed(()=>visibleNodes.value.length>0&&selectedNodes.value.length===visibleNodes.value.length)
@@ -255,6 +281,7 @@ function runBatch(action:string){
   <div class="section-header">
    <strong>{{view === 'groups' ? '节点组管理' : '节点管理'}}</strong>
    <div class="admin-actions layout-actions">
+    <TableSettings v-if="view === 'nodes'" :columns="columns" :settings="settings" @save="saveSettings" />
     <el-dropdown v-if="view==='nodes'" trigger="click" @command="runBatch">
      <el-button :loading="batchInProgress" :disabled="nodeActionInProgress">批量操作{{batchInProgress && batchTotal ? ` · ${batchDone}/${batchTotal}` : ''}}</el-button>
      <template #dropdown><el-dropdown-menu>
@@ -283,8 +310,17 @@ function runBatch(action:string){
      <span v-if="selectedNodes.length" class="subtle node-selection layout-actions">已选 {{selectedNodes.length}} / {{visibleNodes.length}}<el-button link type="primary" @click="selectVisible(false)">清空</el-button></span>
     </div>
     <p v-if="nodeScope==='offline'" class="field-tip node-filter-tip">仅显示已启用的离线节点 <el-button link type="primary" @click="nodeScope=''">显示全部节点</el-button></p>
-    <el-table class="resource-table" :data="visibleNodes" row-key="id" empty-text="暂无匹配的节点">
-     <el-table-column width="48" align="center">
+    <el-table
+     ref="nodeTable"
+     class="resource-table adjustable-table"
+     :data="visibleNodes"
+     row-key="id"
+     border
+     empty-text="暂无匹配的节点"
+     @sort-change="sortChanged"
+     @header-dragend="resizeColumn"
+    >
+     <el-table-column width="48" align="center" :resizable="false">
       <template #header>
        <input type="checkbox" aria-label="全选当前筛选结果" :disabled="!visibleNodes.length" :checked="allVisibleSelected" :indeterminate.prop="selectedNodes.length>0&&!allVisibleSelected" @change="selectVisible(!allVisibleSelected)" />
       </template>
@@ -294,21 +330,44 @@ function runBatch(action:string){
        </label>
       </template>
      </el-table-column>
-     <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
-     <el-table-column prop="public_address" label="公网地址" min-width="155" show-overflow-tooltip><template #default="{ row }">{{ row.public_address || '未配置' }}</template></el-table-column>
-     <el-table-column label="节点组" min-width="145"><template #default="{ row }"><GroupTags :ids="row.group_ids" :groups="groups" empty-text="未分组" /></template></el-table-column>
-     <el-table-column label="用途" width="112"><template #default="{ row }"><el-tag v-if="row.ingress_enabled" class="group-chip">入口</el-tag><el-tag v-if="row.tunnel_exit_enabled" class="group-chip" type="success">出口</el-tag><span v-if="!row.ingress_enabled && !row.tunnel_exit_enabled" class="subtle">未启用</span></template></el-table-column>
-     <el-table-column label="状态" min-width="92">
-      <template #default="{row}">
-       <span :class="{danger:row.uninstall_status?.state==='failed'}">{{row.uninstall_status?.state==='queued'?'等待卸载':row.uninstall_status?.state==='failed'?'卸载失败':!row.enabled?'已停用':row.online?'在线':'离线'}}</span>
-       <small v-if="row.uninstall_status?.error" class="danger">{{row.uninstall_status.error}}</small>
+     <el-table-column
+      v-for="column in displayColumns"
+      :key="column.id"
+      :column-key="column.id"
+      :prop="column.id"
+      :label="column.label"
+      :width="column.width"
+      :min-width="column.minWidth"
+      :sortable="column.sortable ? 'custom' : false"
+      :show-overflow-tooltip="column.id === 'name' || column.id === 'public_address'"
+     >
+      <template #default="{ row }">
+       <template v-if="column.id === 'name'">{{ row.name }}</template>
+       <template v-else-if="column.id === 'public_address'">{{ row.public_address || '未配置' }}</template>
+       <GroupTags v-else-if="column.id === 'group_ids'" :ids="row.group_ids" :groups="groups" empty-text="未分组" />
+       <template v-else-if="column.id === 'role'">
+        <el-tag v-if="row.ingress_enabled" class="group-chip">入口</el-tag>
+        <el-tag v-if="row.tunnel_exit_enabled" class="group-chip" type="success">出口</el-tag>
+        <span v-if="!row.ingress_enabled && !row.tunnel_exit_enabled" class="subtle">未启用</span>
+       </template>
+       <template v-else-if="column.id === 'status'">
+        <span :class="{ danger: row.uninstall_status?.state === 'failed' }">{{ nodeStatus(row) }}</span>
+        <small v-if="row.uninstall_status?.error" class="danger">{{ row.uninstall_status.error }}</small>
+       </template>
+       <span v-else-if="column.id === 'sync'" :class="{ danger: row.sync_error }">{{ nodeSyncStatus(row) }}</span>
+       <template v-else-if="column.id === 'agent_version'">
+        <div>{{ row.agent_version || '未知版本' }}</div>
+        <small v-if="row.update_status" :class="{ danger: row.update_status.state === 'failed' }">{{ updateStates[row.update_status.state] }} {{ row.update_status.error }}</small>
+        <small v-else-if="!row.update_supported" class="subtle">需安装更新服务</small>
+       </template>
+       <template v-else-if="column.id === 'tls'">
+        <span v-if="row.tunnel_security === 'tls'">{{ row.tls_error || row.tls_status }}<small v-if="row.tls_not_after"> · {{ new Date(row.tls_not_after).toLocaleDateString() }}</small></span>
+        <span v-else>—</span>
+       </template>
+       <template v-else-if="column.id === 'active_connections'">{{ row.active_connections }}</template>
       </template>
      </el-table-column>
-     <el-table-column label="配置同步" min-width="130"><template #default="{ row }"><span :class="{ danger: row.sync_error }">{{ row.sync_error || (row.applied_revision >= row.config_revision && row.applied_revision ? '已同步' : '等待同步') }}</span></template></el-table-column>
-     <el-table-column label="节点版本" min-width="145"><template #default="{row}"><div>{{row.agent_version || '未知版本'}}</div><small v-if="row.update_status" :class="{danger:row.update_status.state==='failed'}">{{updateStates[row.update_status.state]}} {{row.update_status.error}}</small><small v-else-if="!row.update_supported" class="subtle">需安装更新服务</small></template></el-table-column>
-     <el-table-column label="TLS 证书" min-width="130"><template #default="{row}"><span v-if="row.tunnel_security==='tls'">{{row.tls_error || row.tls_status}}<small v-if="row.tls_not_after"> · {{new Date(row.tls_not_after).toLocaleDateString()}}</small></span><span v-else>—</span></template></el-table-column>
-     <el-table-column prop="active_connections" label="转发连接" width="84" />
-     <el-table-column fixed="right" class-name="table-actions" label="操作" width="196">
+     <el-table-column fixed="right" class-name="table-actions" label="操作" width="196" :resizable="false">
       <template #default="{row}">
        <div class="layout-actions node-row-actions">
         <el-button link type="primary" @click="installation(row.id)">安装命令</el-button>

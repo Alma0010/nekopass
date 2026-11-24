@@ -3,6 +3,8 @@ import { copyText } from './clipboard'
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import Icon from './Icon.vue'
+import TableSettings from './TableSettings.vue'
+import { useTableLayout, type DataColumn, type SortableTable } from './table-layout'
 import RuleBatchDialog from './RuleBatchDialog.vue'
 import EgressSelect from './EgressSelect.vue'
 import {egressValue,splitEgress,commonEgressChoices} from './egress-options'
@@ -18,7 +20,7 @@ async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> 
 const owner = computed(() => actorID.value), group = ref(-1), query = ref(''), searching = ref(false), selected = ref<Rule[]>([]), busy = ref(false), page = ref(1), groups = ref<Group[]>([])
 const ruleDialog = ref(false), editID = ref(0), targetText = ref(''), groupDialog = ref(false), importDialog = ref(false), importText = ref(''), batchDialog = ref(false), batchValue = ref(0), statsDialog = ref(false), details = ref<Rule | null>(null), advanced = ref<string[]>([])
 const rowsPerPage = ref(20)
-const ruleTable = ref<{ clearSelection: () => void }>()
+const ruleTable = ref<SortableTable & { clearSelection: () => void }>()
 const originDefaults=()=>({enabled:false,server_name:'',root_ca:'',alpn:[] as string[]})
 const blank = (): RuleInput => ({tls_inbound_port:0,tls_inbound_id:0,sni_names:[],tls_alpn:[],origin_tls:originDefaults(), protocol:'tcp', user_id: actorID.value, node_id: 0, ingress_group_id:0, egress_node_id:0,egress_group_id:0, name: '', group_id: 0, listen_port: 0, targets: [], balance: 'random', speed_mbps: 0, ip_limit: 0, connection_limit: 0, proxy_accept: 'off', proxy_send: 'off', proxy_trusted_cidrs: [], enabled: true })
 const form = reactive<RuleInput>(blank())
@@ -91,13 +93,23 @@ const eligibleNodes = computed(() => authorizedNodes.value.filter(n => n.ingress
 function selectIngress(id:number){form.ingress_group_id=0;form.node_id=id;if(inboundMode.value==='tls')form.tls_inbound_id=availableInbounds.value[0]?.id||0;selectedEgress.value=exitChoices.value[0]?.value||'node:0'}
 const ownRules = computed(() => props.rules.filter(r => r.user_id === actorID.value))
 const ownGroups = computed(() => groups.value.filter(g => g.user_id === actorID.value))
-const sortKey = ref(''), sortOrder = ref(''), statusFilter = ref<string[]>([])
+const statusFilter = ref<string[]>([])
+const ruleProtocol = (row: Rule) => row.protocol === 'udp' ? 'UDP' : row.tls_inbound_id || row.tls_inbound_port ? 'TCP / TLS' : 'TCP'
+const ruleColumns: DataColumn<Rule>[] = [
+  { id: 'name', label: '规则名', width: 210, fluid: true, sortValue: row => row.name },
+  { id: 'protocol', label: '协议', width: 100, sortValue: ruleProtocol },
+  { id: 'node_name', label: '入口', width: 210, fluid: true, sortValue: row => row.node_name },
+  { id: 'targets', label: '出口', width: 190, fluid: true, sortValue: row => row.targets.join(' ') },
+  { id: 'traffic_bytes', label: '已用流量', width: 130, sortValue: row => Number(row.traffic_bytes) },
+  { id: 'status', label: '状态', width: 115, sortValue: row => statusText[row.status] ?? row.status },
+]
+const {
+  columns, displayColumns, settings, sortKey, sortDirection, saveSettings, sortChanged, resizeColumn, sortRows,
+} = useTableLayout(() => `nekopass:table:${props.managedUser ? 'managed-rules' : 'rules'}:${props.me.id}`, ruleColumns, ruleTable)
 const filtered = computed(() => {
   const rows = ownRules.value.filter(r => (group.value === -1 || (r.group_id || 0) === group.value) && (!statusFilter.value.length || statusFilter.value.includes(r.status)) && (!query.value || `${r.name} ${r.node_name} ${r.listen_port} ${r.targets.join(' ')} ${r.username}`.toLowerCase().includes(query.value.toLowerCase())))
-  if (sortOrder.value && ['name', 'node_name', 'traffic_bytes'].includes(sortKey.value)) { const key = sortKey.value as 'name' | 'node_name' | 'traffic_bytes'; rows.sort((a, b) => (key === 'traffic_bytes' ? Number(a[key]) - Number(b[key]) : String(a[key]).localeCompare(String(b[key]))) * (sortOrder.value === 'ascending' ? 1 : -1)) }
-  return rows
+  return sortRows(rows)
 })
-function sortChanged(v: {prop: string; order: string}) { sortKey.value = v.prop; sortOrder.value = v.order }
 function filterChanged(v: Record<string, string[]>) { statusFilter.value = v.status || [] }
 const paged = computed(() => filtered.value.slice((page.value - 1) * rowsPerPage.value, page.value * rowsPerPage.value))
 const policy = computed(() => props.managedUser || props.users.find(u => u.id === actorID.value))
@@ -107,7 +119,12 @@ const totalQuota = computed(() => scopedUsers.value.reduce((n, u) => n + Number(
 const maxRules = computed(() => scopedUsers.value.reduce((n, u) => n + u.max_rules, 0))
 const nodeAddress = (r: Rule) => r.ingress_group_id ? (r.ingress_nodes||[]).map(n=>address(n.public_address||n.name,r.listen_port)).join('\n') || '暂无入口节点' : address(r.public_address || r.node_name, r.listen_port)
 const statusText: Record<string, string> = { partial:'部分入口异常', tls_required:'需选择 TLS 入站',inbound_disabled:'TLS 入口停用',proxy_untrusted: '未配置信任来源', upgrade_required: '节点需升级', no_plan: '未分配套餐', plan_disabled: '套餐停用', unauthorized: '无入口权限', active: '正常', disabled: '已暂停', user_disabled: '用户停用', expired: '已到期', quota_exhausted: '流量耗尽', offline: '节点离线', failed: '同步失败', pending: '待同步' }
-watch([owner, group, query, rowsPerPage, statusFilter, sortKey, sortOrder], () => { page.value = 1; selected.value = []; ruleTable.value?.clearSelection() })
+const statusColumn = computed(() => ({
+  filteredValue: statusFilter.value,
+  filters: Object.entries(statusText).map(([value, text]) => ({ value, text })),
+  filterMethod: () => true,
+}))
+watch([owner, group, query, rowsPerPage, statusFilter, sortKey, sortDirection], () => { page.value = 1; selected.value = []; ruleTable.value?.clearSelection() })
 watch(() => props.rules, () => { const live = new Map(props.rules.map(r => [r.id, r])); selected.value = selected.value.flatMap(r => live.has(r.id) ? [live.get(r.id)!] : []) })
 watch(()=>form.protocol,()=>{if(form.protocol!=='tcp'){form.proxy_accept='off';form.proxy_send='off';form.tls_inbound_id=0;form.tls_inbound_port=0;inboundMode.value='plain';form.origin_tls=originDefaults()};if(form.protocol!=='udp'&&props.nodes.find(n=>n.id===form.egress_node_id)?.tunnel_protocol?.endsWith('_udp'))form.egress_node_id=0})
 watch(owner, () => { group.value = -1 })
@@ -157,6 +174,7 @@ async function showStats(r?: Rule) { await action(async () => { stats.value = aw
     <div class="rules-titlebar section-header">
       <strong>{{ managedUser ? managedUser.username + ' 的转发规则' : '我的转发规则' }}</strong>
       <div class="admin-actions layout-actions">
+        <TableSettings :columns="columns" :settings="settings" @save="saveSettings" />
         <el-button @click="searching = !searching"><Icon name="search" />搜索规则</el-button>
         <el-button :loading="busy" @click="action(refresh)"><Icon name="refresh" />刷新</el-button>
         <el-button @click="showStats()"><Icon name="stats" />统计数据</el-button>
@@ -188,7 +206,49 @@ async function showStats(r?: Rule) { await action(async () => { stats.value = aw
         <el-button @click="batch('delete')"><Icon name="delete" />删除选中</el-button>
         <span v-if="selected.length" class="selection-note">已选择 {{ selected.length }} 条</span>
       </div>
-      <el-table ref="ruleTable" :data="paged" row-key="id" @selection-change="selected = $event" @sort-change="sortChanged" @filter-change="filterChanged" empty-text="暂无转发规则，点击「添加规则」开始。" class="rules-table resource-table"><el-table-column type="selection" width="40" :reserve-selection="true" /><el-table-column prop="name" label="规则名" min-width="210" sortable="custom"><template #default="{ row }"><span>{{ row.name }} <small>(#{{ row.id }})</small></span><div v-if="me.is_admin && !owner" class="subtle small">{{ row.username }}</div></template></el-table-column><el-table-column prop="protocol" label="协议" width="90"><template #default="{ row }">{{ row.protocol==='udp'?'UDP':(row.tls_inbound_id||row.tls_inbound_port)?'TCP / TLS':'TCP' }}</template></el-table-column><el-table-column prop="node_name" label="入口" min-width="210" sortable="custom"><template #default="{ row }"><div>入口: {{ row.node_name }} <span class="entry-badge">{{ row.egress_group_id?'出口组: '+row.egress_group_name:row.egress_node_id ? '出口: '+row.egress_node_name : '直转' }}</span></div><div v-if="row.ingress_group_id" class="subtle small">节点组 · {{row.ingress_nodes?.length||0}} 个入口</div><button class="address-link" style="white-space:pre-line;text-align:left" @click="copyAddress(row)" :title="row.ingress_group_id || row.public_address ? '复制入口地址' : '节点尚未配置公网地址'">{{ nodeAddress(row) }}</button><div v-if="row.tls_inbound_id||row.tls_inbound_port" class="subtle small">SNI: {{ (row.sni_names||[]).join(', ') }}</div></template></el-table-column><el-table-column label="出口" min-width="190"><template #default="{ row }"><div v-for="target in row.targets" :key="target">{{ target }}</div></template></el-table-column><el-table-column prop="traffic_bytes" label="已用流量" width="130" sortable="custom"><template #default="{ row }">{{ bytes(row.traffic_bytes) }}</template></el-table-column><el-table-column prop="status" column-key="status" :filtered-value="statusFilter" label="状态" width="115" :filters="Object.entries(statusText).map(([value, text]) => ({ value, text }))" :filter-method="() => true"><template #default="{ row }"><span :class="['rule-status', row.status]">{{ statusText[row.status] || row.status }}</span></template></el-table-column><el-table-column fixed="right" class-name="table-actions" label="操作" width="246"><template #default="{ row }"><div class="row-actions layout-actions"><el-button :aria-label="row.enabled ? '暂停规则' : '恢复规则'" :title="row.enabled ? '暂停' : '恢复'" @click="batch(row.enabled ? 'disable' : 'enable', [row.id])"><Icon :name="row.enabled ? 'pause' : 'play'" /></el-button><el-button title="规则详情" aria-label="规则详情" @click="details = row"><Icon name="help" /></el-button><el-button title="复制规则" aria-label="复制规则" @click="edit(row, true)"><Icon name="copy" /></el-button><el-button title="编辑规则" aria-label="编辑规则" @click="edit(row)"><Icon name="edit" /></el-button><el-button title="重命名" aria-label="重命名" @click="rename(row)"><Icon name="rename" /></el-button><el-button title="删除规则" aria-label="删除规则" @click="batch('delete', [row.id])"><Icon name="delete" /></el-button></div></template></el-table-column></el-table>
+      <el-table
+        ref="ruleTable"
+        :data="paged"
+        row-key="id"
+        border
+        empty-text="暂无转发规则，点击「添加规则」开始。"
+        class="rules-table resource-table adjustable-table"
+        @selection-change="selected = $event"
+        @sort-change="sortChanged"
+        @filter-change="filterChanged"
+        @header-dragend="resizeColumn"
+      >
+        <el-table-column type="selection" width="40" :reserve-selection="true" :resizable="false" />
+        <el-table-column
+          v-for="column in displayColumns"
+          :key="column.id"
+          :column-key="column.id"
+          :prop="column.id"
+          :label="column.label"
+          :width="column.width"
+          :min-width="column.minWidth"
+          :sortable="column.sortable ? 'custom' : false"
+          v-bind="column.id === 'status' ? statusColumn : {}"
+        >
+          <template #default="{ row }">
+            <template v-if="column.id === 'name'">
+              <span>{{ row.name }} <small>(#{{ row.id }})</small></span>
+              <div v-if="me.is_admin && !owner" class="subtle small">{{ row.username }}</div>
+            </template>
+            <template v-else-if="column.id === 'protocol'">{{ ruleProtocol(row) }}</template>
+            <template v-else-if="column.id === 'node_name'">
+              <div>入口: {{ row.node_name }} <span class="entry-badge">{{ row.egress_group_id ? '出口组: ' + row.egress_group_name : row.egress_node_id ? '出口: ' + row.egress_node_name : '直转' }}</span></div>
+              <div v-if="row.ingress_group_id" class="subtle small">节点组 · {{ row.ingress_nodes?.length || 0 }} 个入口</div>
+              <button class="address-link" style="white-space:pre-line;text-align:left" :title="row.ingress_group_id || row.public_address ? '复制入口地址' : '节点尚未配置公网地址'" @click="copyAddress(row)">{{ nodeAddress(row) }}</button>
+              <div v-if="row.tls_inbound_id || row.tls_inbound_port" class="subtle small">SNI: {{ (row.sni_names || []).join(', ') }}</div>
+            </template>
+            <template v-else-if="column.id === 'targets'"><div v-for="target in row.targets" :key="target">{{ target }}</div></template>
+            <template v-else-if="column.id === 'traffic_bytes'">{{ bytes(row.traffic_bytes) }}</template>
+            <span v-else-if="column.id === 'status'" :class="['rule-status', row.status]">{{ statusText[row.status] || row.status }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column fixed="right" class-name="table-actions" label="操作" width="246" :resizable="false"><template #default="{ row }"><div class="row-actions layout-actions"><el-button :aria-label="row.enabled ? '暂停规则' : '恢复规则'" :title="row.enabled ? '暂停' : '恢复'" @click="batch(row.enabled ? 'disable' : 'enable', [row.id])"><Icon :name="row.enabled ? 'pause' : 'play'" /></el-button><el-button title="规则详情" aria-label="规则详情" @click="details = row"><Icon name="help" /></el-button><el-button title="复制规则" aria-label="复制规则" @click="edit(row, true)"><Icon name="copy" /></el-button><el-button title="编辑规则" aria-label="编辑规则" @click="edit(row)"><Icon name="edit" /></el-button><el-button title="重命名" aria-label="重命名" @click="rename(row)"><Icon name="rename" /></el-button><el-button title="删除规则" aria-label="删除规则" @click="batch('delete', [row.id])"><Icon name="delete" /></el-button></div></template></el-table-column>
+      </el-table>
       <div class="rules-pagination layout-toolbar"><span class="subtle">共 {{ filtered.length }} 条规则</span><el-pagination v-model:current-page="page" v-model:page-size="rowsPerPage" :page-sizes="[20, 50, 100]" :total="filtered.length" layout="sizes, prev, pager, next" /></div>
     </div>
   </section>
@@ -262,6 +322,10 @@ async function showStats(r?: Rule) { await action(async () => { stats.value = aw
 
 .rule-dialog-stack > :is(p, .import-text) {
   margin: 0;
+}
+
+.rules-table .row-actions {
+  column-gap: 5px;
 }
 
 @media (max-width: 700px) {

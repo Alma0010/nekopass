@@ -368,6 +368,7 @@ a { color: inherit; text-decoration: none; }
 .el-table .el-table-fixed-column--right { background: var(--surface); border-left: 1px solid var(--border); }
 .el-table th.el-table-fixed-column--right { background: var(--el-table-header-bg-color); }
 .el-table__body-wrapper { overscroll-behavior-x: contain; }
+.adjustable-table .el-table__body .el-table__cell { border-right-color: transparent; }
 .el-dialog { display: flex; flex-direction: column; max-height: calc(100dvh - var(--el-dialog-margin-top, 15vh) - 16px); }
 .el-dialog__body { min-height: 0; overflow-y: auto; }
 .el-dialog__header, .el-dialog__footer { flex-shrink: 0; }

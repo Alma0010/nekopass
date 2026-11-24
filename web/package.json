@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "test": "node --experimental-strip-types --test ../tests/rule-transfer.test.mjs ../tests/user-resource-form.test.mjs ../tests/egress-options.test.mjs ../tests/navigation.test.mjs ../tests/node-updates.test.mjs ../tests/node-batch-create.test.mjs ../tests/node-protocol-form.test.mjs ../tests/probe-chart.test.mjs ../tests/dashboard-chart.test.mjs ../tests/picomatch-security.test.cjs",
+    "test": "node --experimental-strip-types --test ../tests/rule-transfer.test.mjs ../tests/user-resource-form.test.mjs ../tests/egress-options.test.mjs ../tests/navigation.test.mjs ../tests/node-updates.test.mjs ../tests/node-batch-create.test.mjs ../tests/node-protocol-form.test.mjs ../tests/probe-chart.test.mjs ../tests/dashboard-chart.test.mjs ../tests/table-layout.test.mjs ../tests/picomatch-security.test.cjs",
     "build": "vue-tsc --noEmit && vite build"
   },
   "dependencies": {
