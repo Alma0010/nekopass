@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,10 +23,12 @@ import (
 
 const GrantWindow int64 = 256 << 20
 const MaxControlMessageBytes = 16 << 20
+const controlReportIdleTimeout = time.Minute
 
 type StreamServer struct {
 	pb.UnimplementedControlServer
-	Server *Server
+	Server            *Server
+	reportIdleTimeout time.Duration
 }
 
 func (s *StreamServer) Connect(stream pb.Control_ConnectServer) error {
@@ -50,6 +54,16 @@ func (s *StreamServer) Connect(stream pb.Control_ConnectServer) error {
 		defer cancel()
 		_ = conn.Close(closeCtx)
 	}()
+	idleTimeout := s.reportIdleTimeout
+	if idleTimeout <= 0 {
+		idleTimeout = controlReportIdleTimeout
+	}
+	// Bound the lock lifetime even if the stream is blocked sending a reply.
+	// This setting only applies to this dedicated PostgreSQL connection.
+	lockTimeout := strconv.FormatInt((2*idleTimeout).Milliseconds(), 10) + "ms"
+	if _, e = conn.Exec(ctx, "SELECT set_config('idle_session_timeout', $1, false)", lockTimeout); e != nil {
+		return e
+	}
 	var locked bool
 	e = conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", -node.ID).Scan(&locked)
 	if e != nil {
@@ -58,10 +72,25 @@ func (s *StreamServer) Connect(stream pb.Control_ConnectServer) error {
 	if !locked {
 		return status.Error(codes.AlreadyExists, "node already connected")
 	}
+	recvCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	reports := receiveControlReports(recvCtx, stream)
+	timer := time.NewTimer(idleTimeout)
+	defer timer.Stop()
 	for {
-		report, e := stream.Recv()
-		if e != nil {
-			return e
+		var report *pb.AgentMessage
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			slog.Warn("node control heartbeat timed out", "node_id", node.ID)
+			return status.Error(codes.DeadlineExceeded, "node heartbeat timed out")
+		case received := <-reports:
+			timer.Stop()
+			if received.err != nil {
+				return received.err
+			}
+			report = received.report
 		}
 		if report.ProtocolVersion < 5 {
 			return status.Error(codes.FailedPrecondition, "upgrade Agent to protocol v5 or newer")
@@ -85,7 +114,31 @@ func (s *StreamServer) Connect(stream pb.Control_ConnectServer) error {
 		if e = stream.Send(result); e != nil {
 			return e
 		}
+		timer.Reset(idleTimeout)
 	}
+}
+
+type controlReport struct {
+	report *pb.AgentMessage
+	err    error
+}
+
+func receiveControlReports(ctx context.Context, stream pb.Control_ConnectServer) <-chan controlReport {
+	reports := make(chan controlReport)
+	go func() {
+		for ctx.Err() == nil {
+			report, err := stream.Recv()
+			select {
+			case reports <- controlReport{report: report, err: err}:
+			case <-ctx.Done():
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return reports
 }
 
 func (s *StreamServer) exchange(ctx context.Context, conn interface {
