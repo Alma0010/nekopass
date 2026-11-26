@@ -490,8 +490,8 @@ if ! write_manager_payload > "$WORK/nekopassctl"; then
 fi
 bash -n "$WORK/nekopassctl"
 if ! write_updater_payload > "$WORK/nekopass-update"; then
- if [[ -f "$WORK/release/bin/nekopass-update" ]]; then cp "$WORK/release/bin/nekopass-update" "$WORK/nekopass-update"
- else companion="$(dirname -- "${BASH_SOURCE[0]}")/nekopass-update.py"; [[ -f "$companion" ]] || die '缺少更新工具，请使用完整发布安装脚本'; cp "$companion" "$WORK/nekopass-update"; fi
+ if [[ -f "$WORK/release/bin/nekopass-update" ]]; then tr -d '\r' < "$WORK/release/bin/nekopass-update" > "$WORK/nekopass-update"
+ else companion="$(dirname -- "${BASH_SOURCE[0]}")/nekopass-update.py"; [[ -f "$companion" ]] || die '缺少更新工具，请使用完整发布安装脚本'; tr -d '\r' < "$companion" > "$WORK/nekopass-update"; fi
 fi
 if [[ "$TLS_MODE" == existing ]]; then
  [[ -f "$TLS_CERT" && -f "$TLS_KEY" ]] || die '节点连接证书或私钥不存在'

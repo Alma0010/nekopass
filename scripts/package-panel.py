@@ -21,7 +21,7 @@ with tarfile.open(a.output, 'w:gz') as archive:
     def add(path, name, executable=False):
         assert path.is_file() and not path.is_symlink(), 'Unexpected file/link'
         data = path.read_bytes()
-        if name == 'bin/nekopassctl':
+        if name in ('bin/nekopassctl', 'bin/nekopass-update'):
             data = data.replace(b'\r\n', b'\n')
         info = tarfile.TarInfo(name)
         info.size, info.mode = len(data), 0o755 if executable else 0o644
