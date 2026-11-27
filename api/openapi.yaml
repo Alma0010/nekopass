@@ -1410,7 +1410,7 @@ components:
     IPRecoveryConfig:
       type: object
       additionalProperties: false
-      description: Runs independently on the agent every five seconds; does not use the cloud provider GFW detector. Fixed instances require agent protocol 19; profile binding requires protocol 36 and is disabled on older agents until upgraded.
+      description: Runs independently on the agent every five seconds. Fixed instances require agent protocol 19; profile binding requires protocol 36 and is disabled on older agents until upgraded.
       properties:
         enabled: {type: boolean, default: false}
         target_ip: {type: string, description: Public IPv4 responding to ICMP echo; required when enabled}

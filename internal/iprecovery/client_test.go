@@ -52,7 +52,7 @@ func TestConfigRejectsInvalidTargetsAndCredentials(t *testing.T) {
 		t.Fatal("sharing authentication rejected")
 	}
 }
-func TestCloudRequestUsesHeadersAndNeverVendorGFWDetection(t *testing.T) {
+func TestCloudRequestUsesHeadersAndSkipsVendorDetection(t *testing.T) {
 	for _, kind := range []string{"ec2", "lightsail"} {
 		t.Run(kind, func(t *testing.T) {
 			cfg := fixtureConfig()
